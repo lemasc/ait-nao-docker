@@ -427,10 +427,7 @@ export default function () {
 
 ## Scenario A: Low Resources (CPU 0.5 Core)
 
-<figure>
-  <img src="image3.png" alt="Note box indicating Docker settings for Scenario A: cpus: '0.5', memory: '512M'">
-  <figcaption>Docker Configuration for Scenario A</figcaption>
-</figure>
+ตั้งต่า Docker: `cpus: 0.5`, `memory: '512M'`
 
 ### Part 1: Apache (Port 8080)
 
@@ -458,10 +455,7 @@ k6 run -e VUS=5000 -e TARGET_URL=http://localhost:8081 --out csv=nginx_0.5_5000.
 
 ## Scenario B: High Resources (CPU 1.0 Core)
 
-<figure>
-  <img src="image4.png" alt="Note box indicating to edit docker-compose.yml to change limits cpus to '1.0' and run docker-compose up -d again.">
-  <figcaption>Docker Configuration for Scenario B</figcaption>
-</figure>
+แก้ไขไฟล์ `docker-compose.yml` เปลี่ยน limits cpus เป็น `'1.0'` แล้ว `docker-compose up -d` ใหม่ก่อนนะครับ
 
 ### Part 3: Apache (Port 8080)
 
