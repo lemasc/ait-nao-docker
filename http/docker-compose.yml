@@ -1,0 +1,76 @@
+services:
+  # ----------------------------------------------------
+  # 1. System Under Test (SUT)
+  # ----------------------------------------------------
+
+  # Apache Web Server (Target 1)
+  apache:
+    image: httpd:latest
+    container_name: sut-apache
+    ports:
+      - "8080:80" # เข้าผ่าน http://localhost:8080
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50" # จำกัด CPU 0.5 Core
+          memory: 512M # จำกัด RAM 512MB
+    networks:
+      - performance-test-net
+
+  # Nginx Web Server (Target 2)
+  nginx:
+    image: nginx:latest
+    container_name: sut-nginx
+    ports:
+      - "8081:80" # เข้าผ่าน http://localhost:8081
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50" # จำกัด CPU 0.5 Core
+          memory: 512M # จำกัด RAM 512MB
+    networks:
+      - performance-test-net
+
+  # ----------------------------------------------------
+  # 2. Monitoring Stack (Infrastructure)
+  # ----------------------------------------------------
+
+  # cAdvisor: ตัวดึง Metrics จาก Docker Container
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: monitor-cadvisor
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - performance-test-net
+
+  # Prometheus: ฐานข้อมูลเก็บ Metrics
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: monitor-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - performance-test-net
+
+  # Grafana: หน้า Dashboard แสดงผล (User/Pass: admin/admin)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: monitor-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    networks:
+      - performance-test-net
+
+networks:
+  performance-test-net:
+    driver: bridge

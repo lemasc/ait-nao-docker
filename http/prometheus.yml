@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 5s # เก็บข้อมูลทุกๆ 5 วินาที (เพื่อให้เห็นกราฟละเอียดขึ้น)
+
+scrape_configs:
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
