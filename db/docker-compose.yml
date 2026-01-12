@@ -1,0 +1,186 @@
+services:
+  # ----------------------------------------------------
+  # 1. System Under Test (SUT) - Database Layer
+  # ----------------------------------------------------
+
+  # PostgreSQL Database Server
+  postgres:
+    image: postgres:17-alpine
+    container_name: db-postgres
+    ports:
+      - "5433:5432"  # External port 5433 to avoid conflicts
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpass
+      POSTGRES_DB: perftest
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"  # 2 CPU cores for meaningful performance testing
+          memory: 4G   # 4GB RAM for 10M row dataset + cache
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d perftest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - db-perf-net
+
+  # Redis Cache Server
+  redis:
+    image: redis:7-alpine
+    container_name: db-redis
+    ports:
+      - "6380:6379"  # External port 6380 to avoid conflicts
+    command: redis-server --maxmemory 1536mb --maxmemory-policy allkeys-lru
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"  # 1 CPU core
+          memory: 2G   # 2GB RAM (1.5GB maxmemory + overhead)
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - db-perf-net
+
+  # ----------------------------------------------------
+  # 2. Load Generator (Python Application)
+  # ----------------------------------------------------
+
+  # Python Load Generator
+  loadgen:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: db-loadgen
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Database connection
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: perftest
+      DB_USER: testuser
+      DB_PASSWORD: testpass
+      # Redis connection
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # Test configuration (overridden at runtime)
+      TEST_CONFIG: ${TEST_CONFIG:-no_index}
+      TABLE_SIZE: ${TABLE_SIZE:-1000000}
+      CONCURRENCY: ${CONCURRENCY:-10}
+      TEST_DURATION: ${TEST_DURATION:-300}
+      WARMUP_DURATION: ${WARMUP_DURATION:-60}
+      WORKLOAD_SEED: ${WORKLOAD_SEED:-42}
+    volumes:
+      - ./load_test.py:/app/load_test.py:ro
+      - ./generate_data.py:/app/generate_data.py:ro
+      - ./setup_config.py:/app/setup_config.py:ro
+      - ./results:/app/results  # Results directory (read-write)
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"  # 1 CPU core (prevent generator from being bottleneck)
+          memory: 1G   # 1GB RAM
+    networks:
+      - db-perf-net
+    profiles:
+      - manual  # Prevent auto-start, run manually with docker compose run
+
+  # ----------------------------------------------------
+  # 3. Monitoring Stack (Infrastructure)
+  # ----------------------------------------------------
+
+  # PostgreSQL Exporter - Database Metrics
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: db-postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://testuser:testpass@postgres:5432/perftest?sslmode=disable"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - db-perf-net
+
+  # Redis Exporter - Cache Metrics
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: db-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - db-perf-net
+
+  # cAdvisor - Container Resource Metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: db-cadvisor
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    privileged: true
+    networks:
+      - db-perf-net
+
+  # Prometheus - Time-Series Database
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: db-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    networks:
+      - db-perf-net
+
+  # Grafana - Visualization Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: db-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: redis-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - db-perf-net
+
+# ----------------------------------------------------
+# Networks and Volumes
+# ----------------------------------------------------
+
+networks:
+  db-perf-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:
+  grafana-data:
