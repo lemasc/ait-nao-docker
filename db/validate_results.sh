@@ -3,7 +3,8 @@
 # Validation script to check experiment results and build state file
 # This script can reconstruct the experiment state from existing CSV files
 
-set -e
+# Don't exit on error - we want to process all files even if some have issues
+set +e
 
 # Configuration (must match run_experiments.sh)
 CONFIGS=("no_index" "btree_index" "redis_cache")
@@ -55,33 +56,46 @@ validate_csv() {
     # Check if file exists and is readable
     if [ ! -r "$file" ]; then
         echo "not_readable"
-        return
+        return 0
     fi
 
     # Check file size (must be > 1KB for valid results)
-    local size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+    local size=0
+    if stat -c%s "$file" >/dev/null 2>&1; then
+        # GNU stat (Linux)
+        size=$(stat -c%s "$file" 2>/dev/null)
+    elif stat -f%z "$file" >/dev/null 2>&1; then
+        # BSD stat (macOS)
+        size=$(stat -f%z "$file" 2>/dev/null)
+    else
+        # Fallback: use wc
+        size=$(wc -c < "$file" 2>/dev/null || echo 0)
+    fi
+
     if [ "$size" -lt 1000 ]; then
-        echo "too_small"
-        return
+        echo "too_small:$size"
+        return 0
     fi
 
     # Count rows (excluding header)
-    local rows=$(tail -n +2 "$file" | wc -l | tr -d ' ')
+    local rows=$(tail -n +2 "$file" 2>/dev/null | wc -l 2>/dev/null | tr -d ' ')
+    rows=${rows:-0}
 
     # Check if we have enough data rows
     if [ "$rows" -lt "$MIN_ROWS" ]; then
         echo "incomplete:$rows"
-        return
+        return 0
     fi
 
     # Check if CSV is parseable and has expected columns
-    local header=$(head -n 1 "$file")
+    local header=$(head -n 1 "$file" 2>/dev/null)
     if ! echo "$header" | grep -q "timestamp.*throughput_qps.*response_time"; then
         echo "invalid_format"
-        return
+        return 0
     fi
 
     echo "valid:$rows"
+    return 0
 }
 
 # Scan results directory for experiment CSV files
@@ -106,10 +120,8 @@ echo "# Experiment state file - auto-generated on $(date)" >> "$STATE_FILE"
 echo "# Format: config|table_size|concurrency|replication|status|file|rows|timestamp" >> "$STATE_FILE"
 
 # Process each result file
+shopt -s nullglob  # Handle case where no CSV files exist
 for file in "$RESULTS_DIR"/*.csv; do
-    # Skip if no CSV files exist
-    [ -e "$file" ] || continue
-
     filename=$(basename "$file")
 
     # Parse filename: {config}_{size}_{concurrency}_{timestamp}.csv
@@ -134,7 +146,7 @@ for file in "$RESULTS_DIR"/*.csv; do
             for rep in $(seq 1 $REPLICATIONS); do
                 exp_key="$config|$size|$conc|$rep"
                 if [ "${found_experiments[$exp_key]:-0}" -eq 1 ]; then
-                    ((existing_count++))
+                    existing_count=$((existing_count + 1))
                 fi
             done
 
@@ -144,28 +156,29 @@ for file in "$RESULTS_DIR"/*.csv; do
                 exp_key="$config|$size|$conc|$rep"
                 found_experiments[$exp_key]=1
 
-                echo "$exp_key|completed|$filename|$rows|$timestamp" >> "$STATE_FILE"
+                echo "$exp_key|completed|$filename|$rows|$timestamp" >> "$STATE_FILE" || true
                 echo -e "${GREEN}✓${NC} $filename ($rows rows) -> [$config, ${size} rows, conc=$conc, rep=$rep]"
-                ((completed_count++))
+                completed_count=$((completed_count + 1))
             else
                 echo -e "${YELLOW}⚠${NC} $filename ($rows rows) -> Extra result (all $REPLICATIONS replications done)"
             fi
 
         elif [ "$status" = "incomplete" ]; then
             echo -e "${YELLOW}⚠${NC} $filename -> Incomplete ($rows rows, expected >$MIN_ROWS)"
-            ((incomplete_count++))
+            incomplete_count=$((incomplete_count + 1))
         elif [ "$status" = "too_small" ]; then
-            echo -e "${RED}✗${NC} $filename -> Too small (likely interrupted)"
-            ((invalid_count++))
+            echo -e "${RED}✗${NC} $filename -> Too small (${rows} bytes, likely interrupted)"
+            invalid_count=$((invalid_count + 1))
         else
             echo -e "${RED}✗${NC} $filename -> Invalid ($status)"
-            ((invalid_count++))
+            invalid_count=$((invalid_count + 1))
         fi
     else
         # Not a result file (might be summary, etc.)
         continue
     fi
 done
+shopt -u nullglob
 
 echo ""
 echo "======================================================================"
