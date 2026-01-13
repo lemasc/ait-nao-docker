@@ -9,7 +9,7 @@ set -e  # Exit on error
 # Configuration
 CONFIGS=("no_index" "btree_index" "redis_cache")
 TABLE_SIZES=(1000000 10000000)
-CONCURRENCIES=(10 50 100 200 500)
+CONCURRENCIES=(10 50 100 200 250)
 REPLICATIONS=3
 RESULTS_DIR="./results"
 STATE_FILE="$RESULTS_DIR/experiment_state.txt"

@@ -19,8 +19,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"  # 2 CPU cores for meaningful performance testing
-          memory: 4G   # 4GB RAM for 10M row dataset + cache
+          cpus: "4.0"  # 4 CPU cores for up to 250 concurrent connections
+          memory: 6G   # 6GB RAM for 10M row dataset + cache + connections
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U testuser -d perftest"]
       interval: 10s

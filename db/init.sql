@@ -17,12 +17,12 @@ CREATE TABLE users (
 -- CREATE INDEX idx_users_created_at ON users(created_at);
 
 -- Performance tuning parameters
--- These settings optimize for our testing workload
-ALTER SYSTEM SET shared_buffers = '1GB';
-ALTER SYSTEM SET effective_cache_size = '3GB';
+-- These settings optimize for our testing workload (up to 250 concurrent users)
+ALTER SYSTEM SET shared_buffers = '2GB';
+ALTER SYSTEM SET effective_cache_size = '4GB';
 ALTER SYSTEM SET random_page_cost = 1.1;  -- Optimized for SSD storage
-ALTER SYSTEM SET work_mem = '16MB';
-ALTER SYSTEM SET max_connections = 200;
+ALTER SYSTEM SET work_mem = '8MB';
+ALTER SYSTEM SET max_connections = 250;
 ALTER SYSTEM SET statement_timeout = '5000';  -- 5 second query timeout
 
 -- Create helper view for monitoring query statistics
