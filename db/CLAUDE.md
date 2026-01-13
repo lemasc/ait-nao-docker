@@ -175,7 +175,8 @@ docker volume prune -f
 
 4. **Orchestration** (`run_experiments.sh`):
    - Builds experiment list (3 configs × 2 sizes × 5 concurrency × 3 replications)
-   - Randomizes execution order to avoid time-based confounding
+   - Uses **block randomization by table size**: randomizes within each size block, then runs blocks sequentially
+   - This minimizes data regenerations (6 instead of ~49), saving ~7 hours while maintaining validity
    - Saves order to `.experiment_order` for resumability
    - Tracks completion in `experiment_state.txt`
    - For each experiment: reset env → start services → generate data (if needed) → setup config → run test → save state
@@ -234,9 +235,12 @@ CREATE INDEX idx_users_created_at ON users(created_at);
 - Provides 95% confidence intervals for statistical testing
 - Allows ANOVA and Tukey HSD for configuration comparisons
 
-**Why Randomized Order?**
-- Prevents time-based confounding (e.g., thermal throttling, disk wear)
-- Distributes systematic errors evenly across configurations
+**Why Block Randomization by Table Size?**
+- **Block design**: Randomizes experiments within each table size (1M and 10M), then runs size blocks sequentially
+- **Efficiency**: Reduces data regenerations from ~49 to 6 (saving ~7 hours of overhead)
+- **Validity**: Still protects against time-based confounding within each size block
+- **Acceptable trade-off**: In controlled Docker environment with warmup periods, the risk of confounding between size blocks is minimal
+- **Statistical robustness**: 3 replications distributed across time provide detection of any systematic drift
 
 **Why 60s Warmup + 300s Measurement?**
 - Warmup: Fills OS cache, PostgreSQL buffers, Redis cache

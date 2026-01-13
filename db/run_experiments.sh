@@ -168,8 +168,9 @@ fi
 echo "Estimated time: ~$((pending_count * 6)) minutes (optimized with data reuse)"
 echo ""
 
-# Randomize experiment order to avoid time-based confounding
-# Use a seed file to maintain order across restarts unless forced
+# Block randomization by table size to minimize data regenerations
+# Randomizes within each table size block, then runs blocks sequentially
+# This reduces data generations from ~49 to 6 (3 reps × 2 sizes)
 SHUFFLE_SEED_FILE="$RESULTS_DIR/.experiment_order"
 
 if [ -f "$SHUFFLE_SEED_FILE" ] && [ "$FORCE_RESHUFFLE" = false ]; then
@@ -182,11 +183,35 @@ if [ -f "$SHUFFLE_SEED_FILE" ] && [ "$FORCE_RESHUFFLE" = false ]; then
         fi
     done < "$SHUFFLE_SEED_FILE"
 else
-    echo "Randomizing experiment order..."
-    shuffled_experiments=($(printf '%s\n' "${pending_experiments[@]}" | shuf))
+    echo "Randomizing experiment order (block design by table size)..."
+
+    # Separate experiments by table size
+    experiments_by_size=()
+    for size in "${TABLE_SIZES[@]}"; do
+        size_experiments=()
+        for exp in "${pending_experiments[@]}"; do
+            IFS='|' read -r config exp_size conc rep <<< "$exp"
+            if [ "$exp_size" = "$size" ]; then
+                size_experiments+=("$exp")
+            fi
+        done
+
+        # Randomize within this size block
+        if [ ${#size_experiments[@]} -gt 0 ]; then
+            shuffled_block=($(printf '%s\n' "${size_experiments[@]}" | shuf))
+            experiments_by_size+=("${shuffled_block[@]}")
+        fi
+    done
+
+    shuffled_experiments=("${experiments_by_size[@]}")
 
     # Save order for potential restarts
     printf '%s\n' "${shuffled_experiments[@]}" > "$SHUFFLE_SEED_FILE"
+    echo "✓ Block randomization complete:"
+    for size in "${TABLE_SIZES[@]}"; do
+        count=$(printf '%s\n' "${shuffled_experiments[@]}" | grep -c "|$size|" || true)
+        echo "  - ${size} rows: $count experiments"
+    done
 fi
 echo ""
 
