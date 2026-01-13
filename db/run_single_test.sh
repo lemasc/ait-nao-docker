@@ -39,11 +39,16 @@ if ! docker compose ps | grep -q "db-postgres.*Up"; then
     sleep 30
 fi
 
-# Check if data exists
-if [ ! -f "./results/.data_generated_$TABLE_SIZE" ]; then
-    echo "Data not found. Generating $TABLE_SIZE rows..."
+# Check if data exists by querying actual database
+echo "Checking database for existing data..."
+row_count=$(docker compose exec -T postgres psql -U testuser -d perftest -t -c "SELECT COUNT(*) FROM users;" 2>/dev/null | tr -d ' ' || echo "0")
+
+if [ "$row_count" -lt "$TABLE_SIZE" ]; then
+    echo "Database has $row_count rows (expected $TABLE_SIZE). Generating data..."
     docker compose run --rm loadgen python /app/generate_data.py --table-size $TABLE_SIZE --seed 42
-    touch "./results/.data_generated_$TABLE_SIZE"
+    echo "Data generation complete."
+else
+    echo "Data already exists in database ($row_count rows, skipping generation)."
 fi
 
 # Setup configuration
