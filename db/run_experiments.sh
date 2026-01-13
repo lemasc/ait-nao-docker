@@ -3,6 +3,9 @@
 # Database Performance Evaluation - Experiment Orchestration Script
 # This script runs the complete experimental matrix systematically
 # Supports automatic recovery from interruptions via state file
+#
+# Optimization: Only performs full reset (down -v) when table size changes
+# Between other experiments: restarts services keeping data for efficiency
 
 set -e  # Exit on error
 
@@ -162,7 +165,7 @@ if [ $pending_count -eq 0 ]; then
     exit 0
 fi
 
-echo "Estimated time: ~$((pending_count * 8)) minutes"
+echo "Estimated time: ~$((pending_count * 6)) minutes (optimized with data reuse)"
 echo ""
 
 # Randomize experiment order to avoid time-based confounding
@@ -194,31 +197,58 @@ run_experiment() {
     local conc=$3
     local rep=$4
     local exp_num=$5
+    local prev_size=$6
 
     echo "======================================================================"
     echo -e "${GREEN}Experiment $exp_num/$total_experiments${NC}"
     echo "Config: $config | Table: $size rows | Concurrency: $conc | Replication: $rep"
     echo "======================================================================"
 
-    # Reset environment
-    echo "Resetting Docker environment..."
-    docker compose down -v postgres postgres redis > /dev/null 2>&1 || true
-    sleep 2
+    # Determine if we need full reset (only when table size changes)
+    local need_full_reset=false
+    if [ "$prev_size" != "$size" ] || [ -z "$prev_size" ]; then
+        need_full_reset=true
+        echo -e "${YELLOW}Table size change detected ($prev_size → $size): performing full reset${NC}"
+    fi
 
-    # Start core services
-    echo "Starting PostgreSQL and Redis..."
-    docker compose up -d postgres redis
-    echo "Waiting for services to be healthy (30 seconds)..."
-    sleep 30
+    # Reset environment based on need
+    if [ "$need_full_reset" = true ]; then
+        echo "Performing full reset (removing volumes)..."
+        docker compose down -v postgres redis > /dev/null 2>&1 || true
+        sleep 2
 
-    # Generate data if needed (only once per table size)
-    if [ ! -f "$RESULTS_DIR/.data_generated_$size" ]; then
+        echo "Starting PostgreSQL and Redis..."
+        docker compose up -d postgres redis
+        echo "Waiting for services to be healthy (30 seconds)..."
+        sleep 30
+    else
+        echo "Restarting services (keeping data for efficiency)..."
+        docker compose restart postgres redis > /dev/null 2>&1 || true
+        echo "Waiting for services to stabilize (10 seconds)..."
+        sleep 10
+    fi
+
+    # Generate data if needed (check actual database state)
+    local need_data=false
+
+    if [ "$need_full_reset" = true ]; then
+        # After full reset, database is empty - always need data
+        need_data=true
+    else
+        # Quick restart - verify data actually exists in database
+        local row_count=$(docker compose exec -T postgres psql -U testuser -d perftest -t -c "SELECT COUNT(*) FROM users;" 2>/dev/null | tr -d ' ' || echo "0")
+        if [ "$row_count" -lt "$size" ]; then
+            echo -e "${YELLOW}⚠ Database has only $row_count rows (expected $size), regenerating data${NC}"
+            need_data=true
+        fi
+    fi
+
+    if [ "$need_data" = true ]; then
         echo -e "${YELLOW}Generating $size rows of data...${NC}"
         docker compose run --rm loadgen python /app/generate_data.py --table-size $size --seed 42
-        touch "$RESULTS_DIR/.data_generated_$size"
         echo "Data generation complete."
     else
-        echo "Data already generated for table size $size (skipping)."
+        echo "Data already exists in database ($size rows, skipping generation)."
     fi
 
     # Setup configuration (indexes, cache)
@@ -261,6 +291,19 @@ run_experiment() {
 start_time=$(date +%s)
 experiment_count=0
 
+# Initialize previous_size from last completed experiment (for efficient resumption)
+previous_size=""
+if [ -f "$STATE_FILE" ]; then
+    # Get the size from the last completed experiment
+    last_completed=$(grep "|completed|" "$STATE_FILE" | tail -1)
+    if [ -n "$last_completed" ]; then
+        IFS='|' read -r _ last_size _ <<< "$last_completed"
+        previous_size="$last_size"
+        echo -e "${BLUE}Resuming from previous session. Last table size: $previous_size${NC}"
+        echo ""
+    fi
+fi
+
 for exp in "${shuffled_experiments[@]}"; do
     IFS='|' read -r config size conc rep <<< "$exp"
     ((++experiment_count))
@@ -286,7 +329,8 @@ for exp in "${shuffled_experiments[@]}"; do
         break
     fi
 
-    run_experiment "$config" "$size" "$conc" "$rep" "$experiment_count"
+    run_experiment "$config" "$size" "$conc" "$rep" "$experiment_count" "$previous_size"
+    previous_size="$size"  # Update for next iteration
 done
 
 # Cleanup
