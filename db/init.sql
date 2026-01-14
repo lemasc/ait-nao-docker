@@ -22,7 +22,7 @@ ALTER SYSTEM SET shared_buffers = '2GB';
 ALTER SYSTEM SET effective_cache_size = '4GB';
 ALTER SYSTEM SET random_page_cost = 1.1;  -- Optimized for SSD storage
 ALTER SYSTEM SET work_mem = '16MB';
-ALTER SYSTEM SET max_connections = 250;
+ALTER SYSTEM SET max_connections = 300; -- Headroom when running 250‑concurrency tests alongside exporters.
 ALTER SYSTEM SET statement_timeout = '15000';  -- 15 second query timeout
 
 -- Create helper view for monitoring query statistics

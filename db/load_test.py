@@ -85,9 +85,9 @@ def initialize_connection_pools():
 
     # PostgreSQL connection pool
     try:
-        pool_size = max(config.CONCURRENCY, 100)
+        pool_size = max(config.CONCURRENCY, 1)
         pg_pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=5,
+            minconn=1,
             maxconn=pool_size,
             host=config.DB_HOST,
             port=config.DB_PORT,
