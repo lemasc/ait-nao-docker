@@ -62,6 +62,7 @@ config = Config()
 pg_pool = None
 redis_pool = None
 hot_users = None
+precomputed_samples = None  # Pre-computed Zipfian samples for performance
 shutdown_flag = False
 
 # Metrics storage
@@ -122,8 +123,8 @@ def initialize_connection_pools():
 
 
 def load_hot_users_distribution():
-    """Load Zipfian distribution for hot data access."""
-    global hot_users
+    """Load Zipfian distribution for hot data access and pre-compute samples."""
+    global hot_users, precomputed_samples
 
     hot_users_file = os.path.join(config.RESULTS_DIR, 'hot_users.json')
     if not os.path.exists(hot_users_file):
@@ -138,10 +139,26 @@ def load_hot_users_distribution():
     print(f"  - {hot_users['hot_count']} hot users (top 1%)")
     print(f"  - Zipfian α={hot_users['alpha']}")
 
+    # Pre-compute Zipfian samples for performance (avoids expensive np.random.choice in hot path)
+    print("  Pre-computing Zipfian samples...")
+    sample_size = 1_000_000
+    precomputed_samples = np.random.choice(
+        hot_users['user_ids'],
+        size=sample_size,
+        p=hot_users['probabilities'],
+        replace=True
+    )
+    print(f"  ✓ Pre-computed {sample_size:,} samples (~{precomputed_samples.nbytes / 1024 / 1024:.1f} MB)")
+
+    # Verify distribution is preserved
+    unique_samples = len(set(precomputed_samples))
+    print(f"  ✓ Distribution: {unique_samples:,} unique users in sample")
+
 
 def select_user_id():
-    """Select user ID from Zipfian distribution."""
-    return int(np.random.choice(hot_users['user_ids'], p=hot_users['probabilities']))
+    """Select user ID from pre-computed Zipfian samples (fast array lookup)."""
+    idx = random.randint(0, len(precomputed_samples) - 1)
+    return int(precomputed_samples[idx])
 
 
 def select_query_type():
