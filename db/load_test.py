@@ -363,7 +363,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
 
     # Group metrics by second
     second_buckets = defaultdict(lambda: {
-        'latencies': [],
+        'success_latencies': [],
         'successes': 0,
         'errors': 0,
         'error_types': defaultdict(int),
@@ -379,10 +379,9 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
             elapsed_seconds = int(metric['timestamp'] - test_start_time)
             bucket = second_buckets[elapsed_seconds]
 
-            bucket['latencies'].append(metric['response_time'])
-
             if metric['success']:
                 bucket['successes'] += 1
+                bucket['success_latencies'].append(metric['response_time'])
             else:
                 bucket['errors'] += 1
                 if metric['error_type']:
@@ -406,20 +405,36 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
     time_series = []
     for second in sorted(second_buckets.keys()):
         bucket = second_buckets[second]
-        latencies = bucket['latencies']
+        success_latencies = bucket['success_latencies']
+        total_requests = bucket['successes'] + bucket['errors']
 
-        if len(latencies) > 0:
+        if total_requests > 0:
+            if success_latencies:
+                p50 = np.percentile(success_latencies, 50)
+                p95 = np.percentile(success_latencies, 95)
+                p99 = np.percentile(success_latencies, 99)
+                mean = np.mean(success_latencies)
+                max_latency = np.max(success_latencies)
+            else:
+                p50 = None
+                p95 = None
+                p99 = None
+                mean = None
+                max_latency = None
+
             time_series.append({
                 'timestamp': datetime.fromtimestamp(test_start_time + second).isoformat(),
                 'elapsed_seconds': second,
                 'is_warmup': (second < warmup_duration),
-                'throughput_qps': len(latencies),
-                'response_time_p50_ms': np.percentile(latencies, 50),
-                'response_time_p95_ms': np.percentile(latencies, 95),
-                'response_time_p99_ms': np.percentile(latencies, 99),
-                'response_time_mean_ms': np.mean(latencies),
-                'response_time_max_ms': np.max(latencies),
-                'error_rate_pct': (bucket['errors'] / len(latencies)) * 100,
+                'throughput_qps': bucket['successes'],
+                'total_qps': total_requests,
+                'error_qps': bucket['errors'],
+                'response_time_p50_ms': p50,
+                'response_time_p95_ms': p95,
+                'response_time_p99_ms': p99,
+                'response_time_mean_ms': mean,
+                'response_time_max_ms': max_latency,
+                'error_rate_pct': (bucket['errors'] / total_requests) * 100,
                 'error_types_json': json.dumps(bucket['error_types']),
                 'cache_hit_rate_pct': (bucket['cache_hits'] / (bucket['cache_hits'] + bucket['cache_misses']) * 100)
                                       if (bucket['cache_hits'] + bucket['cache_misses']) > 0 else 0,
@@ -439,6 +454,7 @@ def write_results_to_csv(time_series, output_file):
 
     fieldnames = [
         'timestamp', 'elapsed_seconds', 'is_warmup', 'throughput_qps',
+        'total_qps', 'error_qps',
         'response_time_p50_ms', 'response_time_p95_ms', 'response_time_p99_ms',
         'response_time_mean_ms', 'response_time_max_ms',
         'error_rate_pct', 'error_types_json', 'cache_hit_rate_pct',
@@ -527,12 +543,16 @@ def main():
     measurement_data = [row for row in time_series if not row['is_warmup']]
     if measurement_data:
         avg_throughput = np.mean([row['throughput_qps'] for row in measurement_data])
-        avg_p95 = np.mean([row['response_time_p95_ms'] for row in measurement_data])
+        p95_values = [row['response_time_p95_ms'] for row in measurement_data if row['response_time_p95_ms'] is not None]
+        avg_p95 = np.mean(p95_values) if p95_values else None
         avg_error_rate = np.mean([row['error_rate_pct'] for row in measurement_data])
         avg_cache_hit = np.mean([row['cache_hit_rate_pct'] for row in measurement_data])
 
         print(f"  ✓ Average throughput: {avg_throughput:.1f} qps")
-        print(f"  ✓ Average p95 latency: {avg_p95:.2f} ms")
+        if avg_p95 is not None:
+            print(f"  ✓ Average p95 latency: {avg_p95:.2f} ms")
+        else:
+            print("  ✓ Average p95 latency: n/a (no successful requests)")
         print(f"  ✓ Average error rate: {avg_error_rate:.2f}%")
         if config.USE_CACHE:
             print(f"  ✓ Average cache hit rate: {avg_cache_hit:.2f}%")

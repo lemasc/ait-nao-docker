@@ -89,7 +89,7 @@ validate_csv() {
 
     # Check if CSV is parseable and has expected columns
     local header=$(head -n 1 "$file" 2>/dev/null)
-    if ! echo "$header" | grep -q "timestamp.*throughput_qps.*response_time"; then
+    if ! echo "$header" | grep -q "timestamp.*throughput_qps.*total_qps.*error_qps.*response_time"; then
         echo "invalid_format"
         return 0
     fi
