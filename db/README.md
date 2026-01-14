@@ -6,7 +6,7 @@
 
 **Primary Goal:**
 
-> "Compare the query response time and throughput of a PostgreSQL database under three configurations: (1) no index, (2) B-tree index on frequently queried columns, and (3) Redis cache layer, when handling 1,000 concurrent read requests for user lookup queries."
+> "Compare the query response time and throughput of a PostgreSQL database under three configurations: (1) no index, (2) B-tree index on frequently queried columns, and (3) Redis cache layer, when handling 250 concurrent read requests for user lookup queries."
 
 **Secondary Goals:**
 
@@ -123,7 +123,7 @@ Following the document's guidance on **low variability**, **nonredundancy**, and
 
 | Parameter          | Symbol  | Description                    | Typical Values           |
 | ------------------ | ------- | ------------------------------ | ------------------------ |
-| Concurrent clients | C       | Number of parallel connections | 10, 50, 100, 500         |
+| Concurrent clients | C       | Number of parallel connections | 10, 50, 100, 250         |
 | Read/Write ratio   | R:W     | Proportion of reads to writes  | 90:10, 99:1              |
 | Query pattern      | -       | Point query vs. range query    | Point (80%), Range (20%) |
 | Think time         | T_think | Delay between client requests  | 0ms, 100ms               |
@@ -142,7 +142,7 @@ From the parameter list, select factors that significantly impact performance:
 | -------------------------- | ----------------------------------- | ----------------- |
 | **Configuration**          | No Index, B-tree Index, Redis Cache | Core comparison   |
 | **Table Size (N)**         | 1M, 10M                             | Tests scalability |
-| **Concurrent Clients (C)** | 10, 50, 100, 200, 500               | Load scaling      |
+| **Concurrent Clients (C)** | 10, 50, 100, 200, 250               | Load scaling      |
 
 ### Secondary Factors (for sensitivity analysis)
 
@@ -260,7 +260,7 @@ Purpose: Identify which factors have significant effects
 
 ```
 Focus on Configuration and Concurrency with finer granularity
-Concurrency levels: 10, 25, 50, 75, 100, 150, 200, 300, 500
+Concurrency levels: 10, 25, 50, 75, 100, 150, 200, 250
 Purpose: Find knee points and saturation behavior
 ```
 
