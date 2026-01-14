@@ -90,6 +90,8 @@ services:
       QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-15000}
       HOT_READ_FRACTION: ${HOT_READ_FRACTION:-0.80}
       PRECOMPUTE_SAMPLE_SIZE: ${PRECOMPUTE_SAMPLE_SIZE:-1000000}
+      THINK_TIME_MIN_MS: ${THINK_TIME_MIN_MS:-10}
+      THINK_TIME_MAX_MS: ${THINK_TIME_MAX_MS:-50}
     volumes:
       - ./load_test.py:/app/load_test.py:ro
       - ./generate_data.py:/app/generate_data.py:ro

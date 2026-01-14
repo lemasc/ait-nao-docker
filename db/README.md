@@ -201,6 +201,10 @@ Hot/cold targeting is controlled by environment variables:
 
 - `HOT_READ_FRACTION` (default `0.80`): fraction of reads drawn from the hot set (top 1%).
 - `PRECOMPUTE_SAMPLE_SIZE` (default `1000000`): sample cache size for hot/cold ID selection.
+- `THINK_TIME_MIN_MS` (default `10`): minimum per-request think time in milliseconds.
+- `THINK_TIME_MAX_MS` (default `50`): maximum per-request think time in milliseconds.
+
+Think time is applied as a uniform random delay per request within the configured range.
 
 ### Schema Definition
 

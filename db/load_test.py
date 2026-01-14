@@ -51,12 +51,19 @@ class Config:
         self.CACHE_TTL = 300  # seconds
         self.HOT_READ_FRACTION = float(os.getenv('HOT_READ_FRACTION', 0.80))
         self.PRECOMPUTE_SAMPLE_SIZE = int(os.getenv('PRECOMPUTE_SAMPLE_SIZE', 1_000_000))
+        self.THINK_TIME_MIN_MS = int(os.getenv('THINK_TIME_MIN_MS', 10))
+        self.THINK_TIME_MAX_MS = int(os.getenv('THINK_TIME_MAX_MS', 50))
 
         # Results
         self.RESULTS_DIR = '/app/results'
 
         # Enable caching only for redis_cache config
         self.USE_CACHE = (self.TEST_CONFIG == 'redis_cache')
+
+        if self.THINK_TIME_MIN_MS < 0 or self.THINK_TIME_MAX_MS < 0:
+            raise ValueError("THINK_TIME_MIN_MS and THINK_TIME_MAX_MS must be >= 0")
+        if self.THINK_TIME_MIN_MS > self.THINK_TIME_MAX_MS:
+            raise ValueError("THINK_TIME_MIN_MS must be <= THINK_TIME_MAX_MS")
 
 
 # Global state
@@ -332,6 +339,10 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
                     'is_warmup': is_warmup,
                     'error_type': error_type
                 })
+
+            if config.THINK_TIME_MAX_MS > 0:
+                think_ms = random.uniform(config.THINK_TIME_MIN_MS, config.THINK_TIME_MAX_MS)
+                time.sleep(think_ms / 1000.0)
     finally:
         # Release connection when worker exits
         pg_pool.putconn(pg_conn)
