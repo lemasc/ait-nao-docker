@@ -27,6 +27,10 @@ def connect_to_database():
         password=os.getenv('DB_PASSWORD', 'testpass')
     )
     conn.autocommit = True  # Required for VACUUM ANALYZE
+    # Disable statement timeout for long-running maintenance operations
+    # (CREATE INDEX, VACUUM ANALYZE can take minutes on large tables)
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = 0;")
     return conn
 
 
