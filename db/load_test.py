@@ -15,7 +15,7 @@ import time
 import random
 import signal
 from datetime import datetime
-from collections import deque, defaultdict
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
@@ -78,7 +78,23 @@ shutdown_flag = False
 
 # Metrics storage
 metrics_lock = Lock()
-request_metrics = deque()  # Store per-request metrics
+
+
+def create_metrics_bucket():
+    """Create a metrics bucket for one elapsed second."""
+    return {
+        'success_latencies': [],
+        'successes': 0,
+        'errors': 0,
+        'error_types': defaultdict(int),
+        'cache_hits': 0,
+        'cache_misses': 0,
+        'q1_count': 0,
+        'q2_count': 0
+    }
+
+
+second_buckets = defaultdict(create_metrics_bucket)
 
 
 def signal_handler(sig, frame):
@@ -279,7 +295,7 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
     throughout the worker's lifetime to eliminate pool contention and
     object creation overhead.
     """
-    global shutdown_flag, request_metrics, pg_pool, redis_pool
+    global shutdown_flag, pg_pool, redis_pool, second_buckets
 
     # Set random seed for this worker
     np.random.seed(config.WORKLOAD_SEED + worker_id)
@@ -289,6 +305,8 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
     pg_conn = pg_pool.getconn()
     redis_client = redis.Redis(connection_pool=redis_pool) if config.USE_CACHE else None
 
+    local_buckets = defaultdict(create_metrics_bucket)
+
     try:
         total_duration = warmup_duration + test_duration
 
@@ -296,8 +314,6 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
             elapsed = time.time() - test_start_time
             if elapsed >= total_duration:
                 break
-
-            is_warmup = (elapsed < warmup_duration)
 
             # Select query type
             query_type = select_query_type()
@@ -328,109 +344,94 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
             end_time = time.time()
             response_time = (end_time - start_time) * 1000  # milliseconds
 
-            # Record metrics
-            with metrics_lock:
-                request_metrics.append({
-                    'timestamp': end_time,
-                    'query_type': query_type,
-                    'response_time': response_time,
-                    'success': success,
-                    'cache_hit': cache_hit,
-                    'is_warmup': is_warmup,
-                    'error_type': error_type
-                })
+            # Record metrics (aggregate locally to avoid global lock contention)
+            elapsed_second = int(end_time - test_start_time)
+            bucket = local_buckets[elapsed_second]
+            if success:
+                bucket['successes'] += 1
+                bucket['success_latencies'].append(response_time)
+            else:
+                bucket['errors'] += 1
+                if error_type:
+                    bucket['error_types'][error_type] += 1
+
+            if config.USE_CACHE:
+                if cache_hit:
+                    bucket['cache_hits'] += 1
+                else:
+                    bucket['cache_misses'] += 1
+
+            if query_type == 'Q1':
+                bucket['q1_count'] += 1
+            else:
+                bucket['q2_count'] += 1
 
             if config.THINK_TIME_MAX_MS > 0:
                 think_ms = random.uniform(config.THINK_TIME_MIN_MS, config.THINK_TIME_MAX_MS)
                 time.sleep(think_ms / 1000.0)
     finally:
+        # Merge local metrics into global buckets in one critical section
+        with metrics_lock:
+            for second, bucket in local_buckets.items():
+                global_bucket = second_buckets[second]
+                global_bucket['success_latencies'].extend(bucket['success_latencies'])
+                global_bucket['successes'] += bucket['successes']
+                global_bucket['errors'] += bucket['errors']
+                for err_type, count in bucket['error_types'].items():
+                    global_bucket['error_types'][err_type] += count
+                global_bucket['cache_hits'] += bucket['cache_hits']
+                global_bucket['cache_misses'] += bucket['cache_misses']
+                global_bucket['q1_count'] += bucket['q1_count']
+                global_bucket['q2_count'] += bucket['q2_count']
         # Release connection when worker exits
         pg_pool.putconn(pg_conn)
 
 
 def aggregate_metrics_per_second(test_start_time, warmup_duration):
     """Aggregate metrics into per-second buckets."""
-    global request_metrics
-
-    # Group metrics by second
-    second_buckets = defaultdict(lambda: {
-        'success_latencies': [],
-        'successes': 0,
-        'errors': 0,
-        'error_types': defaultdict(int),
-        'cache_hits': 0,
-        'cache_misses': 0,
-        'q1_count': 0,
-        'q2_count': 0
-    })
-
-    with metrics_lock:
-        for metric in request_metrics:
-            elapsed_seconds = int(metric['timestamp'] - test_start_time)
-            bucket = second_buckets[elapsed_seconds]
-
-            if metric['success']:
-                bucket['successes'] += 1
-                bucket['success_latencies'].append(metric['response_time'])
-            else:
-                bucket['errors'] += 1
-                if metric['error_type']:
-                    bucket['error_types'][metric['error_type']] += 1
-
-            if config.USE_CACHE:
-                if metric['cache_hit']:
-                    bucket['cache_hits'] += 1
-                else:
-                    bucket['cache_misses'] += 1
-
-            # Count query types
-            if metric['query_type'] == 'Q1':
-                bucket['q1_count'] += 1
-            elif metric['query_type'] == 'Q2':
-                bucket['q2_count'] += 1
-            else:
-                raise ValueError(f"Unsupported query type: {metric['query_type']}")
+    global second_buckets
 
     # Convert to time series
     time_series = []
-    for second in sorted(second_buckets.keys()):
-        bucket = second_buckets[second]
-        success_latencies = bucket['success_latencies']
-        total_requests = bucket['successes'] + bucket['errors']
+    with metrics_lock:
+        for second in sorted(second_buckets.keys()):
+            bucket = second_buckets[second]
+            success_latencies = bucket['success_latencies']
+            total_requests = bucket['successes'] + bucket['errors']
 
-        if total_requests > 0:
-            if success_latencies:
-                p50 = np.percentile(success_latencies, 50)
-                p95 = np.percentile(success_latencies, 95)
-                p99 = np.percentile(success_latencies, 99)
-                mean = np.mean(success_latencies)
-                max_latency = np.max(success_latencies)
-            else:
-                p50 = None
-                p95 = None
-                p99 = None
-                mean = None
-                max_latency = None
+            if total_requests > 0:
+                if success_latencies:
+                    p50 = np.percentile(success_latencies, 50)
+                    p95 = np.percentile(success_latencies, 95)
+                    p99 = np.percentile(success_latencies, 99)
+                    mean = np.mean(success_latencies)
+                    max_latency = np.max(success_latencies)
+                else:
+                    p50 = None
+                    p95 = None
+                    p99 = None
+                    mean = None
+                    max_latency = None
 
-            time_series.append({
-                'timestamp': datetime.fromtimestamp(test_start_time + second).isoformat(),
-                'elapsed_seconds': second,
-                'is_warmup': (second < warmup_duration),
-                'throughput_qps': bucket['successes'],
-                'total_qps': total_requests,
-                'error_qps': bucket['errors'],
-                'response_time_p50_ms': p50,
-                'response_time_p95_ms': p95,
-                'response_time_p99_ms': p99,
-                'response_time_mean_ms': mean,
-                'response_time_max_ms': max_latency,
-                'error_rate_pct': (bucket['errors'] / total_requests) * 100,
-                'error_types_json': json.dumps(bucket['error_types']),
-                'cache_hit_rate_pct': (bucket['cache_hits'] / (bucket['cache_hits'] + bucket['cache_misses']) * 100)
-                                      if (bucket['cache_hits'] + bucket['cache_misses']) > 0 else 0,
-                'q1_count': bucket['q1_count'],
-                'q2_count': bucket['q2_count']
-            })
+                time_series.append({
+                    'timestamp': datetime.fromtimestamp(test_start_time + second).isoformat(),
+                    'elapsed_seconds': second,
+                    'is_warmup': (second < warmup_duration),
+                    'throughput_qps': bucket['successes'],
+                    'total_qps': total_requests,
+                    'error_qps': bucket['errors'],
+                    'response_time_p50_ms': p50,
+                    'response_time_p95_ms': p95,
+                    'response_time_p99_ms': p99,
+                    'response_time_mean_ms': mean,
+                    'response_time_max_ms': max_latency,
+                    'error_rate_pct': (bucket['errors'] / total_requests) * 100,
+                    'error_types_json': json.dumps(bucket['error_types']),
+                    'cache_hit_rate_pct': (bucket['cache_hits'] / (bucket['cache_hits'] + bucket['cache_misses']) * 100)
+                                          if (bucket['cache_hits'] + bucket['cache_misses']) > 0 else 0,
+                    'q1_count': bucket['q1_count'],
+                    'q2_count': bucket['q2_count']
+                })
 
     return time_series
 
