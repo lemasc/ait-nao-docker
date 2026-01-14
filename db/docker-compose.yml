@@ -9,6 +9,8 @@ services:
     container_name: db-postgres
     ports:
       - "5433:5432"  # External port 5433 to avoid conflicts
+    cpus: "4.0"
+    mem_limit: 6g
     environment:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpass
@@ -35,6 +37,8 @@ services:
     container_name: db-redis
     ports:
       - "6380:6379"  # External port 6380 to avoid conflicts
+    cpus: "1.0"
+    mem_limit: 2g
     command: redis-server --maxmemory 1536mb --maxmemory-policy allkeys-lru
     deploy:
       resources:
@@ -59,6 +63,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: db-loadgen
+    cpus: "2.0"
+    mem_limit: 2g
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,6 +87,7 @@ services:
       TEST_DURATION: ${TEST_DURATION:-300}
       WARMUP_DURATION: ${WARMUP_DURATION:-60}
       WORKLOAD_SEED: ${WORKLOAD_SEED:-42}
+      QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-15000}
     volumes:
       - ./load_test.py:/app/load_test.py:ro
       - ./generate_data.py:/app/generate_data.py:ro

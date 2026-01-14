@@ -47,7 +47,7 @@ class Config:
         self.WORKLOAD_SEED = int(os.getenv('WORKLOAD_SEED', 42))
 
         # Query configuration
-        self.QUERY_TIMEOUT = 5000  # milliseconds
+        self.QUERY_TIMEOUT = int(os.getenv('QUERY_TIMEOUT_MS', 15000))  # milliseconds
         self.CACHE_TTL = 300  # seconds
 
         # Results
@@ -339,6 +339,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
         'latencies': [],
         'successes': 0,
         'errors': 0,
+        'error_types': defaultdict(int),
         'cache_hits': 0,
         'cache_misses': 0,
         'q1_count': 0,
@@ -357,6 +358,8 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
                 bucket['successes'] += 1
             else:
                 bucket['errors'] += 1
+                if metric['error_type']:
+                    bucket['error_types'][metric['error_type']] += 1
 
             if config.USE_CACHE:
                 if metric['cache_hit']:
@@ -390,6 +393,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
                 'response_time_mean_ms': np.mean(latencies),
                 'response_time_max_ms': np.max(latencies),
                 'error_rate_pct': (bucket['errors'] / len(latencies)) * 100,
+                'error_types_json': json.dumps(bucket['error_types']),
                 'cache_hit_rate_pct': (bucket['cache_hits'] / (bucket['cache_hits'] + bucket['cache_misses']) * 100)
                                       if (bucket['cache_hits'] + bucket['cache_misses']) > 0 else 0,
                 'q1_count': bucket['q1_count'],
@@ -410,7 +414,7 @@ def write_results_to_csv(time_series, output_file):
         'timestamp', 'elapsed_seconds', 'is_warmup', 'throughput_qps',
         'response_time_p50_ms', 'response_time_p95_ms', 'response_time_p99_ms',
         'response_time_mean_ms', 'response_time_max_ms',
-        'error_rate_pct', 'cache_hit_rate_pct',
+        'error_rate_pct', 'error_types_json', 'cache_hit_rate_pct',
         'q1_count', 'q2_count', 'q3_count'
     ]
 
