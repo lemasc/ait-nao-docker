@@ -4,15 +4,7 @@
 
 ### Goals (Specific and Measurable)
 
-**Primary Goal:**
-
 > "Compare the query response time and throughput of a PostgreSQL database under three configurations: (1) no index, (2) B-tree index on frequently queried columns, and (3) Redis cache layer, when handling 250 concurrent read requests for user lookup queries."
-
-**Secondary Goals:**
-
-- Determine the optimal cache TTL (Time-To-Live) that balances hit rate and data freshness
-- Find the "knee" point where each configuration's throughput saturates
-- Measure the write penalty introduced by indexing and cache invalidation
 
 ### System Boundaries
 
