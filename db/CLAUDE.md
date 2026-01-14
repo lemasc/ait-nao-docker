@@ -54,9 +54,9 @@ docker compose run --rm loadgen python /app/generate_data.py --table-size 100000
 # Examples:
 ./run_single_test.sh no_index 1000000 10
 ./run_single_test.sh btree_index 1000000 100
-./run_single_test.sh redis_cache 10000000 500
+./run_single_test.sh redis_cache 10000000 250
 
-# Run full experimental suite (90 tests, ~12-16 hours)
+# Run full experimental suite (90 tests)
 ./run_experiments.sh
 
 # Resume interrupted experimental run (uses state file)
@@ -176,7 +176,7 @@ docker volume prune -f
 4. **Orchestration** (`run_experiments.sh`):
    - Builds experiment list (3 configs × 2 sizes × 5 concurrency × 3 replications)
    - Uses **block randomization by table size**: randomizes within each size block, then runs blocks sequentially
-   - This minimizes data regenerations (6 instead of ~49), saving ~7 hours while maintaining validity
+   - This minimizes data regenerations (6 instead of ~49), saving amount of hours while maintaining validity
    - Saves order to `.experiment_order` for resumability
    - Tracks completion in `experiment_state.txt`
    - For each experiment: reset env → start services → generate data (if needed) → setup config → run test → save state

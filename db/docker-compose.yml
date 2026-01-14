@@ -89,8 +89,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"  # 1 CPU core (prevent generator from being bottleneck)
-          memory: 1G   # 1GB RAM
+          cpus: "2.0"  # 2 CPU cores (prevent generator from being bottleneck)
+          memory: 2G   # 2GB RAM
     networks:
       - db-perf-net
     profiles:

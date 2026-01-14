@@ -182,10 +182,17 @@ def execute_query_q3(conn, start_date, end_date):
     return result
 
 
-def execute_with_cache(query_type, params):
-    """Execute query with Redis cache (if enabled)."""
-    global pg_pool, redis_pool
+def execute_with_cache(query_type, params, pg_conn, redis_client):
+    """Execute query with Redis cache (if enabled).
 
+    Optimized version that reuses connections to eliminate object creation overhead.
+
+    Args:
+        query_type: Type of query (Q1, Q2, Q3)
+        params: Query parameters
+        pg_conn: Pre-created PostgreSQL connection (reused per worker)
+        redis_client: Pre-created Redis client (reused per worker, or None)
+    """
     # Generate cache key
     if query_type == 'Q1':
         cache_key = f"user:id:{params[0]}"
@@ -196,10 +203,9 @@ def execute_with_cache(query_type, params):
 
     # Try cache first (if enabled)
     cache_hit = False
-    if config.USE_CACHE:
+    if config.USE_CACHE and redis_client:
         try:
-            r = redis.Redis(connection_pool=redis_pool)
-            cached = r.get(cache_key)
+            cached = redis_client.get(cache_key)
             if cached:
                 cache_hit = True
                 result = json.loads(cached)
@@ -209,95 +215,102 @@ def execute_with_cache(query_type, params):
             pass
 
     # Cache miss or caching disabled - query PostgreSQL
-    conn = pg_pool.getconn()
-    try:
-        if query_type == 'Q1':
-            result = execute_query_q1(conn, params[0])
-        elif query_type == 'Q2':
-            result = execute_query_q2(conn, params[0])
-        else:  # Q3
-            result = execute_query_q3(conn, params[0], params[1])
+    if query_type == 'Q1':
+        result = execute_query_q1(pg_conn, params[0])
+    elif query_type == 'Q2':
+        result = execute_query_q2(pg_conn, params[0])
+    else:  # Q3
+        result = execute_query_q3(pg_conn, params[0], params[1])
 
-        # Store in cache if enabled
-        if config.USE_CACHE:
-            try:
-                r = redis.Redis(connection_pool=redis_pool)
-                # Convert result to JSON-serializable format
-                result_json = json.dumps([[str(v) for v in row] for row in result])
-                r.setex(cache_key, config.CACHE_TTL, result_json)
-            except Exception as e:
-                # Cache write error - ignore
-                pass
+    # Store in cache if enabled
+    if config.USE_CACHE and redis_client:
+        try:
+            # Convert result to JSON-serializable format
+            result_json = json.dumps([[str(v) for v in row] for row in result])
+            redis_client.setex(cache_key, config.CACHE_TTL, result_json)
+        except Exception as e:
+            # Cache write error - ignore
+            pass
 
-        return result, cache_hit
-
-    finally:
-        pg_pool.putconn(conn)
+    return result, cache_hit
 
 
 def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
-    """Worker task that executes queries in a loop."""
-    global shutdown_flag, request_metrics
+    """Worker task that executes queries in a loop.
+
+    Optimized version: Creates connections once per worker and reuses them
+    throughout the worker's lifetime to eliminate pool contention and
+    object creation overhead.
+    """
+    global shutdown_flag, request_metrics, pg_pool, redis_pool
 
     # Set random seed for this worker
     np.random.seed(config.WORKLOAD_SEED + worker_id)
     random.seed(config.WORKLOAD_SEED + worker_id)
 
-    total_duration = warmup_duration + test_duration
+    # Acquire connections ONCE per worker (not per request)
+    pg_conn = pg_pool.getconn()
+    redis_client = redis.Redis(connection_pool=redis_pool) if config.USE_CACHE else None
 
-    while not shutdown_flag:
-        elapsed = time.time() - test_start_time
-        if elapsed >= total_duration:
-            break
+    try:
+        total_duration = warmup_duration + test_duration
 
-        is_warmup = (elapsed < warmup_duration)
+        while not shutdown_flag:
+            elapsed = time.time() - test_start_time
+            if elapsed >= total_duration:
+                break
 
-        # Select query type
-        query_type = select_query_type()
+            is_warmup = (elapsed < warmup_duration)
 
-        # Generate query parameters
-        if query_type == 'Q1':
-            user_id = select_user_id()
-            params = (user_id,)
-        elif query_type == 'Q2':
-            user_id = select_user_id()
-            email = f"user{user_id}@example.com"
-            params = (email,)
-        else:  # Q3
-            # Random date range within data range
-            base_date = datetime(2020, 1, 1)
-            start_offset = random.randint(0, 1430)
-            range_days = random.randint(1, 30)
-            start_date = base_date + timedelta(days=start_offset)
-            end_date = start_date + timedelta(days=range_days)
-            params = (start_date, end_date)
+            # Select query type
+            query_type = select_query_type()
 
-        # Execute query and measure time
-        start_time = time.time()
-        success = True
-        cache_hit = False
-        error_type = None
+            # Generate query parameters
+            if query_type == 'Q1':
+                user_id = select_user_id()
+                params = (user_id,)
+            elif query_type == 'Q2':
+                user_id = select_user_id()
+                email = f"user{user_id}@example.com"
+                params = (email,)
+            else:  # Q3
+                # Random date range within data range
+                base_date = datetime(2020, 1, 1)
+                start_offset = random.randint(0, 1430)
+                range_days = random.randint(1, 30)
+                start_date = base_date + timedelta(days=start_offset)
+                end_date = start_date + timedelta(days=range_days)
+                params = (start_date, end_date)
 
-        try:
-            result, cache_hit = execute_with_cache(query_type, params)
-        except Exception as e:
-            success = False
-            error_type = type(e).__name__
+            # Execute query and measure time (using reused connections)
+            start_time = time.time()
+            success = True
+            cache_hit = False
+            error_type = None
 
-        end_time = time.time()
-        response_time = (end_time - start_time) * 1000  # milliseconds
+            try:
+                result, cache_hit = execute_with_cache(query_type, params, pg_conn, redis_client)
+            except Exception as e:
+                success = False
+                error_type = type(e).__name__
 
-        # Record metrics
-        with metrics_lock:
-            request_metrics.append({
-                'timestamp': end_time,
-                'query_type': query_type,
-                'response_time': response_time,
-                'success': success,
-                'cache_hit': cache_hit,
-                'is_warmup': is_warmup,
-                'error_type': error_type
-            })
+            end_time = time.time()
+            response_time = (end_time - start_time) * 1000  # milliseconds
+
+            # Record metrics
+            with metrics_lock:
+                request_metrics.append({
+                    'timestamp': end_time,
+                    'query_type': query_type,
+                    'response_time': response_time,
+                    'success': success,
+                    'cache_hit': cache_hit,
+                    'is_warmup': is_warmup,
+                    'error_type': error_type
+                })
+    finally:
+        # Release connection when worker exits
+        pg_pool.putconn(pg_conn)
 
 
 def aggregate_metrics_per_second(test_start_time, warmup_duration):
