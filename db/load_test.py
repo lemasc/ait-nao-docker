@@ -14,7 +14,7 @@ import sys
 import time
 import random
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime
 from collections import deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -191,12 +191,9 @@ def select_user_id():
 def select_query_type():
     """Select query type based on workload distribution."""
     rand = random.random()
-    if rand < 0.80:
-        return 'Q1'  # 80% - Point query by user_id
-    elif rand < 0.95:
-        return 'Q2'  # 15% - Point query by email
-    else:
-        return 'Q3'  # 5% - Range query by created_at
+    if rand < 0.85:
+        return 'Q1'  # 85% - Point query by user_id
+    return 'Q2'  # 15% - Point query by email
 
 
 def execute_query_q1(conn, user_id):
@@ -215,24 +212,13 @@ def execute_query_q2(conn, email):
     return result
 
 
-def execute_query_q3(conn, start_date, end_date):
-    """Execute Q3: Range query by created_at."""
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT * FROM users WHERE created_at BETWEEN %s AND %s LIMIT 100;",
-            (start_date, end_date)
-        )
-        result = cur.fetchall()
-    return result
-
-
 def execute_with_cache(query_type, params, pg_conn, redis_client):
     """Execute query with Redis cache (if enabled).
 
     Optimized version that reuses connections to eliminate object creation overhead.
 
     Args:
-        query_type: Type of query (Q1, Q2, Q3)
+        query_type: Type of query (Q1, Q2)
         params: Query parameters
         pg_conn: Pre-created PostgreSQL connection (reused per worker)
         redis_client: Pre-created Redis client (reused per worker, or None)
@@ -242,8 +228,8 @@ def execute_with_cache(query_type, params, pg_conn, redis_client):
         cache_key = f"user:id:{params[0]}"
     elif query_type == 'Q2':
         cache_key = f"user:email:{params[0]}"
-    else:  # Q3
-        cache_key = f"users:range:{params[0]}:{params[1]}"
+    else:
+        raise ValueError(f"Unsupported query type: {query_type}")
 
     # Try cache first (if enabled)
     cache_hit = False
@@ -263,8 +249,8 @@ def execute_with_cache(query_type, params, pg_conn, redis_client):
         result = execute_query_q1(pg_conn, params[0])
     elif query_type == 'Q2':
         result = execute_query_q2(pg_conn, params[0])
-    else:  # Q3
-        result = execute_query_q3(pg_conn, params[0], params[1])
+    else:
+        raise ValueError(f"Unsupported query type: {query_type}")
 
     # Store in cache if enabled
     if config.USE_CACHE and redis_client:
@@ -317,14 +303,8 @@ def worker_task(worker_id, test_start_time, warmup_duration, test_duration):
                 user_id = select_user_id()
                 email = f"user{user_id}@example.com"
                 params = (email,)
-            else:  # Q3
-                # Random date range within data range
-                base_date = datetime(2020, 1, 1)
-                start_offset = random.randint(0, 1430)
-                range_days = random.randint(1, 30)
-                start_date = base_date + timedelta(days=start_offset)
-                end_date = start_date + timedelta(days=range_days)
-                params = (start_date, end_date)
+            else:
+                raise ValueError(f"Unsupported query type: {query_type}")
 
             # Execute query and measure time (using reused connections)
             start_time = time.time()
@@ -370,8 +350,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
         'cache_hits': 0,
         'cache_misses': 0,
         'q1_count': 0,
-        'q2_count': 0,
-        'q3_count': 0
+        'q2_count': 0
     })
 
     with metrics_lock:
@@ -399,7 +378,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
             elif metric['query_type'] == 'Q2':
                 bucket['q2_count'] += 1
             else:
-                bucket['q3_count'] += 1
+                raise ValueError(f"Unsupported query type: {metric['query_type']}")
 
     # Convert to time series
     time_series = []
@@ -439,8 +418,7 @@ def aggregate_metrics_per_second(test_start_time, warmup_duration):
                 'cache_hit_rate_pct': (bucket['cache_hits'] / (bucket['cache_hits'] + bucket['cache_misses']) * 100)
                                       if (bucket['cache_hits'] + bucket['cache_misses']) > 0 else 0,
                 'q1_count': bucket['q1_count'],
-                'q2_count': bucket['q2_count'],
-                'q3_count': bucket['q3_count']
+                'q2_count': bucket['q2_count']
             })
 
     return time_series
@@ -458,7 +436,7 @@ def write_results_to_csv(time_series, output_file):
         'response_time_p50_ms', 'response_time_p95_ms', 'response_time_p99_ms',
         'response_time_mean_ms', 'response_time_max_ms',
         'error_rate_pct', 'error_types_json', 'cache_hit_rate_pct',
-        'q1_count', 'q2_count', 'q3_count'
+        'q1_count', 'q2_count'
     ]
 
     with open(output_file, 'w', newline='') as f:

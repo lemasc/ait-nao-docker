@@ -117,7 +117,7 @@ Following the document's guidance on **low variability**, **nonredundancy**, and
 | ------------------ | ------- | ------------------------------ | ------------------------ |
 | Concurrent clients | C       | Number of parallel connections | 10, 50, 100, 250         |
 | Read/Write ratio   | R:W     | Proportion of reads to writes  | 90:10, 99:1              |
-| Query pattern      | -       | Point query vs. range query    | Point (80%), Range (20%) |
+| Query pattern      | -       | Point query mix only           | user_id (85%), email (15%) |
 | Think time         | T_think | Delay between client requests  | 0ms, 100ms               |
 | Data distribution  | -       | Uniform, Zipfian (hot spots)   | Zipfian (α=0.99)         |
 | Test duration      | T_test  | Total experiment runtime       | 300s                     |
@@ -193,7 +193,7 @@ Each experiment: 3 replications × 300 seconds = 900 seconds per configuration
 | Characteristic      | Specification                                                                                  |
 | ------------------- | ---------------------------------------------------------------------------------------------- |
 | **Data Model**      | Users table: user_id (PK), email, name, created_at, metadata (JSONB)                           |
-| **Query Mix**       | 80% point queries (by user_id), 15% point queries (by email), 5% range queries (by created_at) |
+| **Query Mix**       | 85% point queries (by user_id), 15% point queries (by email) |
 | **Distribution**    | Zipfian (α=0.99) over hot set + uniform cold reads via `HOT_READ_FRACTION`                      |
 | **Arrival Pattern** | Closed-loop with configurable think time                                                       |
 
@@ -222,14 +222,11 @@ CREATE INDEX idx_users_created_at ON users(created_at);
 ### Query Templates
 
 ```sql
--- Q1: Point query by ID (80%)
+-- Q1: Point query by ID (85%)
 SELECT * FROM users WHERE user_id = $1;
 
 -- Q2: Point query by email (15%)
 SELECT * FROM users WHERE email = $1;
-
--- Q3: Range query by date (5%)
-SELECT * FROM users WHERE created_at BETWEEN $1 AND $2 LIMIT 100;
 ```
 
 ### Workload Form by Technique
