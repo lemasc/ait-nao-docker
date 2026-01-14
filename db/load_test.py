@@ -49,6 +49,8 @@ class Config:
         # Query configuration
         self.QUERY_TIMEOUT = int(os.getenv('QUERY_TIMEOUT_MS', 15000))  # milliseconds
         self.CACHE_TTL = 300  # seconds
+        self.HOT_READ_FRACTION = float(os.getenv('HOT_READ_FRACTION', 0.80))
+        self.PRECOMPUTE_SAMPLE_SIZE = int(os.getenv('PRECOMPUTE_SAMPLE_SIZE', 1_000_000))
 
         # Results
         self.RESULTS_DIR = '/app/results'
@@ -62,7 +64,9 @@ config = Config()
 pg_pool = None
 redis_pool = None
 hot_users = None
-precomputed_samples = None  # Pre-computed Zipfian samples for performance
+precomputed_hot_samples = None  # Pre-computed Zipfian samples for hot set
+precomputed_cold_samples = None  # Pre-computed uniform samples for cold set
+hot_fraction = 0.0
 shutdown_flag = False
 
 # Metrics storage
@@ -124,7 +128,7 @@ def initialize_connection_pools():
 
 def load_hot_users_distribution():
     """Load Zipfian distribution for hot data access and pre-compute samples."""
-    global hot_users, precomputed_samples
+    global hot_users, precomputed_hot_samples, precomputed_cold_samples, hot_fraction
 
     hot_users_file = os.path.join(config.RESULTS_DIR, 'hot_users.json')
     if not os.path.exists(hot_users_file):
@@ -135,30 +139,53 @@ def load_hot_users_distribution():
     with open(hot_users_file, 'r') as f:
         hot_users = json.load(f)
 
+    total_users = int(hot_users.get('total_users', config.TABLE_SIZE))
+    hot_count = int(hot_users['hot_count'])
+    cold_start = hot_count + 1
+    cold_end = total_users
+
+    hot_fraction = max(0.0, min(1.0, config.HOT_READ_FRACTION))
+
     print(f"✓ Loaded hot users distribution:")
     print(f"  - {hot_users['hot_count']} hot users (top 1%)")
     print(f"  - Zipfian α={hot_users['alpha']}")
+    print(f"  - Hot read fraction: {hot_fraction:.0%}")
 
-    # Pre-compute Zipfian samples for performance (avoids expensive np.random.choice in hot path)
+    # Pre-compute samples for performance (avoids expensive RNG in hot path)
     print("  Pre-computing Zipfian samples...")
-    sample_size = 1_000_000
-    precomputed_samples = np.random.choice(
+    sample_size = config.PRECOMPUTE_SAMPLE_SIZE
+    precomputed_hot_samples = np.random.choice(
         hot_users['user_ids'],
         size=sample_size,
         p=hot_users['probabilities'],
         replace=True
     )
-    print(f"  ✓ Pre-computed {sample_size:,} samples (~{precomputed_samples.nbytes / 1024 / 1024:.1f} MB)")
+    print(f"  ✓ Pre-computed {sample_size:,} hot samples (~{precomputed_hot_samples.nbytes / 1024 / 1024:.1f} MB)")
+
+    if cold_start <= cold_end:
+        precomputed_cold_samples = np.random.randint(
+            cold_start,
+            cold_end + 1,
+            size=sample_size
+        )
+        print(f"  ✓ Pre-computed {sample_size:,} cold samples")
+    else:
+        precomputed_cold_samples = None
+        print("  ⚠ No cold range available; all reads will target hot users")
 
     # Verify distribution is preserved
-    unique_samples = len(set(precomputed_samples))
-    print(f"  ✓ Distribution: {unique_samples:,} unique users in sample")
+    unique_samples = len(set(precomputed_hot_samples))
+    print(f"  ✓ Hot distribution: {unique_samples:,} unique users in sample")
 
 
 def select_user_id():
-    """Select user ID from pre-computed Zipfian samples (fast array lookup)."""
-    idx = random.randint(0, len(precomputed_samples) - 1)
-    return int(precomputed_samples[idx])
+    """Select user ID from hot/cold pre-computed samples (fast array lookup)."""
+    use_hot = random.random() < hot_fraction or precomputed_cold_samples is None
+    if use_hot:
+        idx = random.randint(0, len(precomputed_hot_samples) - 1)
+        return int(precomputed_hot_samples[idx])
+    idx = random.randint(0, len(precomputed_cold_samples) - 1)
+    return int(precomputed_cold_samples[idx])
 
 
 def select_query_type():

@@ -88,6 +88,8 @@ services:
       WARMUP_DURATION: ${WARMUP_DURATION:-60}
       WORKLOAD_SEED: ${WORKLOAD_SEED:-42}
       QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-15000}
+      HOT_READ_FRACTION: ${HOT_READ_FRACTION:-0.80}
+      PRECOMPUTE_SAMPLE_SIZE: ${PRECOMPUTE_SAMPLE_SIZE:-1000000}
     volumes:
       - ./load_test.py:/app/load_test.py:ro
       - ./generate_data.py:/app/generate_data.py:ro

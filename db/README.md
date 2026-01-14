@@ -202,8 +202,13 @@ Each experiment: 3 replications × 300 seconds = 900 seconds per configuration
 | ------------------- | ---------------------------------------------------------------------------------------------- |
 | **Data Model**      | Users table: user_id (PK), email, name, created_at, metadata (JSONB)                           |
 | **Query Mix**       | 80% point queries (by user_id), 15% point queries (by email), 5% range queries (by created_at) |
-| **Distribution**    | Zipfian (α=0.99) - realistic hot spot pattern                                                  |
+| **Distribution**    | Zipfian (α=0.99) over hot set + uniform cold reads via `HOT_READ_FRACTION`                      |
 | **Arrival Pattern** | Closed-loop with configurable think time                                                       |
+
+Hot/cold targeting is controlled by environment variables:
+
+- `HOT_READ_FRACTION` (default `0.80`): fraction of reads drawn from the hot set (top 1%).
+- `PRECOMPUTE_SAMPLE_SIZE` (default `1000000`): sample cache size for hot/cold ID selection.
 
 ### Schema Definition
 
