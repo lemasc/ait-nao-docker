@@ -64,7 +64,7 @@ services:
       dockerfile: Dockerfile
     container_name: db-loadgen
     cpus: "4.0"
-    mem_limit: 2g
+    mem_limit: 4g
     depends_on:
       postgres:
         condition: service_healthy
@@ -101,7 +101,7 @@ services:
       resources:
         limits:
           cpus: "4.0"  # 4 CPU cores (prevent generator from being bottleneck)
-          memory: 2G   # 2GB RAM
+          memory: 4G   # 4GB RAM
     networks:
       - db-perf-net
     profiles:
