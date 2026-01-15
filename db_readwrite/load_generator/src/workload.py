@@ -41,6 +41,10 @@ class WorkloadExecutor:
         read_pct, write_pct = config.get('read_write_ratio', [90, 10])
         self.read_probability = read_pct / 100.0
 
+        # Per-session timeouts for workload connections (prep stays unbounded).
+        self.statement_timeout_ms = config.get('statement_timeout_ms', 2000)
+        self.lock_timeout_ms = config.get('lock_timeout_ms', 200)
+
         # Operation weights
         read_ops = config.get('read_operations', {})
         self.read_operation_weights = [
@@ -139,6 +143,9 @@ class WorkloadExecutor:
         try:
             # Get a dedicated connection for this worker
             with self.database.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SET statement_timeout = %s", (self.statement_timeout_ms,))
+                    cur.execute("SET lock_timeout = %s", (self.lock_timeout_ms,))
                 logger.debug(f"Worker {worker_id} started")
 
                 while not self.stop_flag.is_set():

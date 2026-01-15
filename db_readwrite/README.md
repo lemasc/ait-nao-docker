@@ -89,6 +89,8 @@ workload:
   concurrency: 4                  # Number of concurrent clients
   duration_seconds: 300           # Measurement phase duration
   warmup_seconds: 60              # Warmup phase duration
+  statement_timeout_ms: 2000      # Workload statement timeout
+  lock_timeout_ms: 200            # Workload lock wait timeout
 ```
 
 ### Running Tests with Different Configurations
