@@ -32,6 +32,8 @@ load_generator/
 ## Configuration
 
 See `config/test_config.yaml` for all available options.
+For large runs, use `metrics.stream_detailed_csv` and `metrics.max_latency_samples`
+to keep memory bounded while still exporting detailed latencies.
 
 ## Running
 

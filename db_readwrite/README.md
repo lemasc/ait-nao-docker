@@ -91,6 +91,10 @@ workload:
   warmup_seconds: 60              # Warmup phase duration
   statement_timeout_ms: 2000      # Workload statement timeout
   lock_timeout_ms: 200            # Workload lock wait timeout
+
+metrics:
+  stream_detailed_csv: true       # Stream per-op latencies to disk
+  max_latency_samples: 200000     # 0 = store all latencies (exact percentiles)
 ```
 
 ### Running Tests with Different Configurations
@@ -182,6 +186,7 @@ db_readwrite/
 
 - **P95 Latency**: 95th percentile latency per operation type (in milliseconds)
 - **Throughput**: Operations per second
+- If `metrics.max_latency_samples` is set, percentiles are computed from a sample.
 
 ### Supporting Metrics
 

@@ -5,6 +5,7 @@ Metrics collection and export module using Prometheus client.
 import csv
 import json
 import logging
+import random
 import threading
 from datetime import datetime
 from collections import defaultdict
@@ -31,12 +32,18 @@ class MetricsCollector:
         self.output_dir = Path(config.get('output_dir', '/results'))
         self.export_json = config.get('export_json', True)
         self.export_csv = config.get('export_csv', True)
+        self.stream_detailed_csv = config.get('stream_detailed_csv', False)
+        self.max_latency_samples = config.get('max_latency_samples', 0)
         self.latency_buckets = config.get('latency_buckets',
                                          [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0])
 
-        # Thread-safe storage for detailed metrics
+        # Thread-safe storage for metrics
         self.lock = threading.Lock()
-        self.latencies = defaultdict(list)  # operation_type -> list of latencies
+        self.latency_samples = defaultdict(list)  # operation_type -> sample list of latencies
+        self.latency_total_counts = defaultdict(int)
+        self.latency_sums = defaultdict(float)
+        self.latency_mins = {}
+        self.latency_maxs = {}
         self.operation_counts = defaultdict(lambda: {'success': 0, 'error': 0})
 
         # Prometheus metrics
@@ -44,6 +51,9 @@ class MetricsCollector:
 
         # HTTP server for Prometheus
         self.http_server_started = False
+        self.base_filename: Optional[str] = None
+        self._detailed_file = None
+        self._detailed_writer = None
 
     def _setup_prometheus_metrics(self):
         """Setup Prometheus metrics."""
@@ -84,6 +94,23 @@ class MetricsCollector:
             except Exception as e:
                 logger.error(f"Failed to start metrics HTTP server: {e}")
 
+    def start_run(self, test_config: dict):
+        """Initialize run metadata and optional streaming outputs."""
+        indexed = "indexed" if test_config.get('indexed', False) else "no_index"
+        ratio = test_config.get('read_write_ratio', [90, 10])
+        concurrency = test_config.get('concurrency', 4)
+        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
+
+        self.base_filename = f"{indexed}_r{ratio[0]}w{ratio[1]}_c{concurrency}_{timestamp}"
+
+        if self.export_csv and self.stream_detailed_csv:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            csv_file = self.output_dir / f"{self.base_filename}_detailed.csv"
+            self._detailed_file = open(csv_file, 'w', newline='')
+            self._detailed_writer = csv.writer(self._detailed_file)
+            self._detailed_writer.writerow(['operation_type', 'latency_seconds', 'latency_ms'])
+            logger.info(f"Streaming detailed latencies to {csv_file}")
+
     def record_operation(self, operation_type: str, latency: float, success: bool):
         """
         Record a single operation result.
@@ -98,10 +125,30 @@ class MetricsCollector:
         status = 'success' if success else 'error'
         self.operations_counter.labels(operation_type=operation_type, status=status).inc()
 
-        # Store detailed data for offline analysis
+        # Store metrics data for offline analysis
         with self.lock:
-            self.latencies[operation_type].append(latency)
             self.operation_counts[operation_type][status] += 1
+            self.latency_total_counts[operation_type] += 1
+            self.latency_sums[operation_type] += latency
+            current_min = self.latency_mins.get(operation_type)
+            current_max = self.latency_maxs.get(operation_type)
+            self.latency_mins[operation_type] = latency if current_min is None else min(current_min, latency)
+            self.latency_maxs[operation_type] = latency if current_max is None else max(current_max, latency)
+
+            if self.max_latency_samples and self.max_latency_samples > 0:
+                samples = self.latency_samples[operation_type]
+                total_seen = self.latency_total_counts[operation_type]
+                if len(samples) < self.max_latency_samples:
+                    samples.append(latency)
+                else:
+                    j = random.randint(1, total_seen)
+                    if j <= self.max_latency_samples:
+                        samples[random.randint(0, self.max_latency_samples - 1)] = latency
+            else:
+                self.latency_samples[operation_type].append(latency)
+
+            if self._detailed_writer is not None:
+                self._detailed_writer.writerow([operation_type, latency, latency * 1000])
 
     def set_active_connections(self, count: int):
         """Update active connections gauge."""
@@ -117,11 +164,15 @@ class MetricsCollector:
         with self.lock:
             summary = {}
 
-            for op_type, latencies in self.latencies.items():
-                if not latencies:
+            for op_type, total_count in self.latency_total_counts.items():
+                if total_count == 0:
                     continue
 
-                sorted_latencies = sorted(latencies)
+                samples = self.latency_samples.get(op_type, [])
+                if not samples:
+                    continue
+
+                sorted_latencies = sorted(samples)
                 n = len(sorted_latencies)
 
                 def percentile(p):
@@ -135,12 +186,12 @@ class MetricsCollector:
                 counts = self.operation_counts[op_type]
 
                 summary[op_type] = {
-                    'count': n,
+                    'count': total_count,
                     'success': counts['success'],
                     'error': counts['error'],
-                    'min_latency_ms': min(latencies) * 1000,
-                    'max_latency_ms': max(latencies) * 1000,
-                    'mean_latency_ms': (sum(latencies) / n) * 1000,
+                    'min_latency_ms': self.latency_mins[op_type] * 1000,
+                    'max_latency_ms': self.latency_maxs[op_type] * 1000,
+                    'mean_latency_ms': (self.latency_sums[op_type] / total_count) * 1000,
                     'p50_latency_ms': percentile(50) * 1000,
                     'p95_latency_ms': percentile(95) * 1000,
                     'p99_latency_ms': percentile(99) * 1000,
@@ -165,12 +216,14 @@ class MetricsCollector:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Generate filename base from config
-        indexed = "indexed" if test_config.get('indexed', False) else "no_index"
-        ratio = test_config.get('read_write_ratio', [90, 10])
-        concurrency = test_config.get('concurrency', 4)
-        timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
+        if self.base_filename is None:
+            indexed = "indexed" if test_config.get('indexed', False) else "no_index"
+            ratio = test_config.get('read_write_ratio', [90, 10])
+            concurrency = test_config.get('concurrency', 4)
+            timestamp = datetime.utcnow().strftime("%Y%m%dT%H%M%S%fZ")
+            self.base_filename = f"{indexed}_r{ratio[0]}w{ratio[1]}_c{concurrency}_{timestamp}"
 
-        base_filename = f"{indexed}_r{ratio[0]}w{ratio[1]}_c{concurrency}_{timestamp}"
+        base_filename = self.base_filename
 
         # Export JSON
         if self.export_json:
@@ -189,7 +242,7 @@ class MetricsCollector:
             logger.info(f"Results exported to {json_file}")
 
         # Export CSV (detailed latencies)
-        if self.export_csv:
+        if self.export_csv and not self.stream_detailed_csv:
             csv_file = self.output_dir / f"{base_filename}_detailed.csv"
 
             with open(csv_file, 'w', newline='') as f:
@@ -197,7 +250,7 @@ class MetricsCollector:
                 writer.writerow(['operation_type', 'latency_seconds', 'latency_ms'])
 
                 with self.lock:
-                    for op_type, latencies in self.latencies.items():
+                    for op_type, latencies in self.latency_samples.items():
                         for latency in latencies:
                             writer.writerow([op_type, latency, latency * 1000])
 
@@ -229,6 +282,15 @@ class MetricsCollector:
         logger.info(f"Summary exported to {summary_csv}")
 
         return summary
+
+    def close(self):
+        """Close any open resources."""
+        if self._detailed_file is not None:
+            try:
+                self._detailed_file.close()
+            finally:
+                self._detailed_file = None
+                self._detailed_writer = None
 
     def print_summary(self, summary: dict, duration: float):
         """Print summary statistics to console."""

@@ -53,6 +53,7 @@ def main():
         # Metrics
         metrics = MetricsCollector(metrics_config)
         metrics.start_http_server()
+        metrics.start_run(workload_config)
         logger.info("  Metrics collector initialized")
 
         # Setup database schema and load data
@@ -115,6 +116,7 @@ def main():
 
         # Cleanup
         logger.info("Cleaning up...")
+        metrics.close()
         database.close()
 
         logger.info("\n" + "=" * 80)

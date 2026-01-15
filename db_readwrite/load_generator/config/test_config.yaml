@@ -53,6 +53,8 @@ metrics:
   prometheus_port: 8000
   export_json: true
   export_csv: true
+  stream_detailed_csv: true
+  max_latency_samples: 200000  # 0 = store all latencies (exact percentiles)
   output_dir: /results
 
   # Histogram buckets for latency (in seconds)
