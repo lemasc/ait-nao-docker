@@ -319,67 +319,6 @@ histogram_quantile(0.95, rate(operation_latency_seconds_bucket{operation_type="p
 sum(rate(operations_total[1m]))
 ```
 
-## Troubleshooting
-
-### Password Authentication Failed
-
-If you see "password authentication failed for user postgres", the PostgreSQL volume likely exists from a previous run with different credentials.
-
-**Solution:**
-```bash
-# Stop and remove all volumes
-docker compose down -v
-
-# Start fresh
-./setup.sh
-```
-
-**Note:** This will delete all data and reinitialize the database.
-
-### PostgreSQL Not Starting
-
-Check container logs:
-```bash
-docker compose logs postgres
-```
-
-Ensure you have enough resources allocated to Docker (8GB RAM, 4 CPU cores).
-
-### Load Generator Fails to Connect
-
-Wait for PostgreSQL to be fully ready:
-```bash
-docker compose exec postgres pg_isready -U postgres
-```
-
-### Out of Memory
-
-Reduce dataset size in configuration:
-```yaml
-workload:
-  dataset_size: 500000  # Reduce from 1M
-```
-
-### Shared Memory Error ("No space left on device")
-
-If you see errors about shared memory during VACUUM or other operations, the PostgreSQL container needs more `/dev/shm`. The docker-compose.yml is configured with 2GB (`shm_size: 2g`), which should be sufficient. If you still encounter issues:
-
-1. Verify the setting: `docker compose config | grep shm_size`
-2. Restart PostgreSQL: `docker compose restart postgres`
-3. If needed, increase further in docker-compose.yml
-
-### Grafana Dashboard Not Loading
-
-Restart Grafana:
-```bash
-docker compose restart grafana
-```
-
-Check provisioning logs:
-```bash
-docker compose logs grafana
-```
-
 ## Performance Tips
 
 ### For Faster Tests
