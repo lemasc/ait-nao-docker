@@ -23,6 +23,11 @@ scrape_configs:
           instance: 'load_generator'
           service: 'benchmark'
 
+  # cAdvisor Metrics
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["cadvisor:8080"]
+
   # Prometheus itself
   - job_name: 'prometheus'
     static_configs:
