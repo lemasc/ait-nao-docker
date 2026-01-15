@@ -116,6 +116,13 @@ There are helper scripts under `scripts/` to generate the 30-config matrix, pers
 python scripts/generate_configs.py
 ```
 
+This copies `load_generator/config/test_config.yaml` and only overrides:
+- `workload.indexed`
+- `workload.read_write_ratio`
+- `workload.concurrency`
+
+All other fields (database, dataset size, timeouts, operation weights, metrics output) are inherited from the base config. Filenames follow the pattern `indexed|no_index_rw<read>_<write>_c<concurrency>.yaml` under `load_generator/config/generated/`.
+
 **2) Generate a run order (with optional filters and block ordering)**
 ```bash
 python scripts/generate_run_order.py \
