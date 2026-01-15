@@ -144,8 +144,10 @@ class WorkloadExecutor:
             # Get a dedicated connection for this worker
             with self.database.get_connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute("SET statement_timeout = %s", (self.statement_timeout_ms,))
-                    cur.execute("SET lock_timeout = %s", (self.lock_timeout_ms,))
+                    statement_timeout_ms = int(self.statement_timeout_ms)
+                    lock_timeout_ms = int(self.lock_timeout_ms)
+                    cur.execute(f"SET statement_timeout = {statement_timeout_ms}")
+                    cur.execute(f"SET lock_timeout = {lock_timeout_ms}")
                 logger.debug(f"Worker {worker_id} started")
 
                 while not self.stop_flag.is_set():
