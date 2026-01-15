@@ -107,6 +107,35 @@ cp load_generator/config/test_config.yaml load_generator/config/my_test.yaml
 ./run_test.sh config/my_test.yaml
 ```
 
+### Automating Matrix Runs
+
+There are helper scripts under `scripts/` to generate the 30-config matrix, persist a run order, and execute it with resume support.
+
+**1) Generate the 2×3×5 matrix configs**
+```bash
+python scripts/generate_configs.py
+```
+
+**2) Generate a run order (with optional filters and block ordering)**
+```bash
+python scripts/generate_run_order.py \
+  --indexed true,false \
+  --read-write-ratios 90:10,50:50,10:90 \
+  --concurrency 1,4,8,16,32 \
+  --block-by indexed,read_write_ratio,concurrency \
+  --output run_orders/run_order.json
+```
+
+**3) Execute the run order with state tracking**
+```bash
+python scripts/run_matrix.py --run-order run_orders/run_order.json
+```
+
+Notes:
+- The run order file captures filters and ordering so you can rerun partial matrices later.
+- A state file is written alongside the run order as `<run_order>.state.json` and is used to resume after interruption.
+- Use `--start-index` to restart at a specific 0-based index, or `--dry-run` to preview commands.
+
 ## Architecture
 
 ### Components
@@ -177,6 +206,10 @@ db_readwrite/
 │   ├── config/
 │   │   └── test_config.yaml     # Test configuration
 │   └── README.md
+├── scripts/
+│   ├── generate_configs.py      # Create config matrix
+│   ├── generate_run_order.py    # Filter + order configs into a run list
+│   └── run_matrix.py            # Execute run order with resume support
 └── results/                     # Test results (generated)
 ```
 
