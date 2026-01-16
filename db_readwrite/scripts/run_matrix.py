@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
+import yaml
+
 
 def default_state_path(run_order_path: Path) -> Path:
     return run_order_path.with_name(run_order_path.stem + ".state.json")
@@ -25,7 +27,97 @@ def write_state(state_path: Path, state: dict):
         handle.write("\n")
 
 
-def build_command(config_path: str, args) -> list:
+def resolve_config_path(config_path: str, repo_root: Path) -> Path:
+    candidate = Path(config_path)
+    if candidate.is_absolute():
+        return candidate
+    repo_candidate = repo_root / candidate
+    if repo_candidate.exists():
+        return repo_candidate
+    return repo_root / "load_generator" / candidate
+
+
+def load_config(config_path: str, repo_root: Path) -> dict:
+    resolved = resolve_config_path(config_path, repo_root)
+    with resolved.open("r") as handle:
+        return yaml.safe_load(handle)
+
+
+def get_workload_config(entry: dict, repo_root: Path) -> dict:
+    workload = entry.get("workload") or {}
+    if workload.get("dataset_size") is None or workload.get("indexed") is None:
+        config_path = entry.get("config_path")
+        if config_path:
+            config = load_config(config_path, repo_root)
+            workload = config.get("workload", {})
+    return workload
+
+
+def run_psql(repo_root: Path, query: str) -> subprocess.CompletedProcess:
+    cmd = [
+        "docker",
+        "compose",
+        "exec",
+        "-T",
+        "postgres",
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "benchmark_db",
+        "-t",
+        "-A",
+        "-c",
+        query,
+    ]
+    return subprocess.run(
+        cmd,
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+
+
+def get_row_count(repo_root: Path):
+    table_check = run_psql(repo_root, "SELECT to_regclass('public.test_table');")
+    if table_check.returncode != 0:
+        return None, table_check.stderr.strip() or table_check.stdout.strip()
+
+    if not table_check.stdout.strip():
+        return 0, None
+
+    row_result = run_psql(repo_root, "SELECT COUNT(*) FROM test_table;")
+    if row_result.returncode != 0:
+        return None, row_result.stderr.strip() or row_result.stdout.strip()
+
+    try:
+        return int(row_result.stdout.strip()), None
+    except ValueError:
+        return None, row_result.stdout.strip()
+
+
+def should_skip_data_load(workload: dict, repo_root: Path, args) -> tuple:
+    if args.skip_data_load:
+        return True, "forced by --skip-data-load"
+
+    if args.dry_run:
+        return False, "dry run"
+
+    dataset_size = workload.get("dataset_size")
+    if dataset_size is None:
+        return False, "dataset_size not found"
+
+    row_count, error = get_row_count(repo_root)
+    if error:
+        return False, f"db check failed ({error})"
+
+    if row_count >= dataset_size:
+        return True, f"rows={row_count} expected>={dataset_size}"
+
+    return False, f"rows={row_count} expected>={dataset_size}"
+
+
+def build_command(config_path: str, args, skip_data_load: bool) -> list:
     cmd = [
         "docker",
         "compose",
@@ -47,7 +139,7 @@ def build_command(config_path: str, args) -> list:
         cmd.extend(["--log-level", args.log_level])
     if args.skip_warmup:
         cmd.append("--skip-warmup")
-    if args.skip_data_load:
+    if skip_data_load:
         cmd.append("--skip-data-load")
 
     return cmd
@@ -151,8 +243,13 @@ def main() -> int:
                 return 1
 
             label = entry.get("id", config_path)
-            cmd = build_command(config_path, args)
+            workload = get_workload_config(entry, repo_root)
+            skip_data_load, skip_reason = should_skip_data_load(
+                workload, repo_root, args
+            )
+            cmd = build_command(config_path, args, skip_data_load)
             print(f"[{index + 1}/{total}] {label}")
+            print(f"Data load: {'skip' if skip_data_load else 'run'} ({skip_reason})")
             print(" ".join(cmd))
 
             if args.dry_run:
