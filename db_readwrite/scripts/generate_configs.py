@@ -70,8 +70,19 @@ def main() -> int:
     )
     parser.add_argument(
         "--output-dir",
-        default="load_generator/config/generated",
+        default=None,
         help="Directory to write generated YAML configs",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=["memory", "disk"],
+        help="Experiment phase (memory or disk)",
+    )
+    parser.add_argument(
+        "--dataset-size",
+        type=int,
+        default=None,
+        help="Override workload.dataset_size",
     )
     parser.add_argument(
         "--indexed",
@@ -105,10 +116,22 @@ def main() -> int:
     ratios = parse_ratio_list(args.read_write_ratios)
     concurrency_values = parse_int_list(args.concurrency)
 
-    output_dir = Path(args.output_dir)
+    if args.output_dir:
+        output_dir = Path(args.output_dir)
+    else:
+        output_dir = Path(
+            "load_generator/config/generated_disk"
+            if args.phase == "disk"
+            else "load_generator/config/generated"
+        )
     if not output_dir.is_absolute():
         output_dir = repo_root / output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    dataset_size = args.dataset_size
+    # Overide dataset size for disk phase
+    if dataset_size is None and args.phase == "disk":
+        dataset_size = 16_000_000
 
     count = 0
     for indexed in indexed_values:
@@ -119,6 +142,8 @@ def main() -> int:
                 workload["indexed"] = indexed
                 workload["read_write_ratio"] = ratio
                 workload["concurrency"] = concurrency
+                if dataset_size is not None:
+                    workload["dataset_size"] = dataset_size
 
                 filename = build_filename(indexed, ratio, concurrency)
                 output_path = output_dir / filename
