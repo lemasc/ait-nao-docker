@@ -81,6 +81,10 @@ class QueryExecutor:
             return latency, True
         except Exception as e:
             self._log_error("point_lookup", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
@@ -108,6 +112,10 @@ class QueryExecutor:
             return latency, True
         except Exception as e:
             self._log_error("range_scan", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
@@ -135,6 +143,10 @@ class QueryExecutor:
             return latency, True
         except Exception as e:
             self._log_error("range_order", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
