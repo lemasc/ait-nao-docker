@@ -1,0 +1,47 @@
+database:
+  host: postgres
+  port: 5432
+  name: benchmark_db
+  user: postgres
+  password: postgres
+  pool_size: 10
+workload:
+  dataset_size: 1000000
+  indexed: false
+  read_write_ratio:
+  - 10
+  - 90
+  concurrency: 4
+  duration_seconds: 300
+  warmup_seconds: 60
+  statement_timeout_ms: 2000
+  lock_timeout_ms: 200
+  read_operations:
+    point_lookup_weight: 50
+    range_scan_weight: 30
+    range_order_weight: 20
+  write_operations:
+    insert_weight: 50
+    update_weight: 50
+  range_scan_size: 100
+  payload_size_bytes: 1024
+metrics:
+  prometheus_port: 8000
+  export_json: true
+  export_csv: true
+  stream_detailed_csv: true
+  max_latency_samples: 200000
+  output_dir: /results
+  latency_buckets:
+  - 0.001
+  - 0.005
+  - 0.01
+  - 0.025
+  - 0.05
+  - 0.1
+  - 0.25
+  - 0.5
+  - 1.0
+  - 2.5
+  - 5.0
+  - 10.0
