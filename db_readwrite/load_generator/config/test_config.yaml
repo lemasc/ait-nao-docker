@@ -31,7 +31,7 @@ workload:
   warmup_seconds: 60     # 1 minute warmup
 
   # Timeouts for workload connections (prep steps are unbounded)
-  statement_timeout_ms: 2000
+  statement_timeout_ms: 10000
   lock_timeout_ms: 200
 
   # Distribution of read operations (must sum to 100)
