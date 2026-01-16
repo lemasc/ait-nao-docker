@@ -1,33 +1,38 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Top-level orchestration lives in `docker-compose.yml` with helper scripts `setup.sh`, `run_test.sh`, and `teardown.sh`.
-- Load generator code is in `load_generator/src/` (Python modules like `main.py`, `workload.py`, `database.py`).
-- Configuration lives in `load_generator/config/test_config.yaml` and Grafana/Prometheus files under `grafana/` and `prometheus/`.
-- PostgreSQL tuning and initialization are in `postgres/` (`postgresql.conf`, `init.sql`).
-- Generated artifacts (results, CSV/JSON) go to `results/` and are gitignored.
+- `load_generator/src/`: Python workload runner (entry point in `main.py`, config in `config.py`).
+- `load_generator/config/`: Base and generated YAML configs for benchmarks.
+- `scripts/`: Matrix generation and run-order tooling.
+- `postgres/`, `prometheus/`, `grafana/`: Service configs used by Docker Compose.
+- `results/`: Benchmark output (ignored by git per `.gitignore`).
+- `run_orders/`: Saved run-order JSON files for matrix runs.
 
 ## Build, Test, and Development Commands
-- `./setup.sh`: pull images and start PostgreSQL, Prometheus, Grafana, and exporters.
-- `./run_test.sh [config/path.yaml]`: run a benchmark with the default or specified config.
-- `./teardown.sh`: stop containers and remove volumes (keeps `results/`).
-- `docker compose run --rm load_generator python -m src.main --config /app/config/test_config.yaml --skip-data-load`: rerun against existing data.
+- `./setup.sh`: Start the full stack (PostgreSQL, Prometheus, Grafana, exporter).
+- `./run_test.sh [config/path.yaml]`: Run a benchmark using the default or specified config.
+- `./teardown.sh`: Stop containers and remove volumes (keeps `results/`).
+- `docker compose run --rm load_generator python -m src.main --config /app/config/test_config.yaml`: Run the load generator directly; add `--skip-data-load` or `--skip-warmup` for iteration.
+- `python scripts/generate_configs.py`: Produce the 2x3x5 config matrix under `load_generator/config/generated/`.
 
 ## Coding Style & Naming Conventions
-- Python follows 4-space indentation and PEP 8 naming: `snake_case` for functions/vars and `PascalCase` for classes.
-- Config files use 2-space YAML indentation and lower_snake_case keys (e.g., `read_write_ratio`).
-- Keep new modules in `load_generator/src/` and mirror existing file naming patterns.
+- Python uses 4-space indentation, snake_case functions/variables, and module-level constants in UPPER_SNAKE_CASE.
+- YAML keys follow snake_case (see `load_generator/config/test_config.yaml`).
+- Generated config filenames follow: `indexed|no_index_rw<read>_<write>_c<concurrency>.yaml`.
+- No formatter/linter is enforced; match the existing style in the touched file.
 
 ## Testing Guidelines
-- There are no unit tests; validation is via benchmark runs.
-- Use `./run_test.sh` for end-to-end checks and inspect `results/` CSV/JSON outputs.
-- When changing workload logic, run at least a short config (e.g., reduced `duration_seconds`).
+- No unit test framework is configured; validation is via benchmark runs.
+- Use `./run_test.sh` for a standard check and inspect outputs in `results/` (JSON and CSV).
 
 ## Commit & Pull Request Guidelines
-- Recent commits use short, lowercase, imperative messages (e.g., "fix db timeout").
-- PRs should include: a brief problem/solution summary, the exact config used, and any result highlights.
-- Do not commit generated data under `results/` or CSV/JSON outputs (see `.gitignore`).
+- No explicit commit convention is documented; use short, imperative messages (e.g., "Add run order filter support").
+- PRs should describe the benchmark parameters or config changes, and include relevant script/command examples.
+- Avoid committing generated artifacts under `results/` (ignored by `.gitignore`).
 
 ## Security & Configuration Tips
-- Default credentials are for local benchmarking only; avoid exposing ports outside localhost.
-- If you modify `postgres/postgresql.conf`, restart with `docker compose restart postgres`.
+- Default services run on localhost; Grafana uses `admin/admin` by default.
+- Keep benchmark configs in version control; avoid embedding secrets in YAML.
+
+## Agent Notes
+- Review `CLAUDE.md` for workflow specifics and common commands.
