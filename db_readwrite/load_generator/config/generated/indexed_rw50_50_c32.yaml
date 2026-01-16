@@ -14,7 +14,7 @@ workload:
   concurrency: 32
   duration_seconds: 300
   warmup_seconds: 60
-  statement_timeout_ms: 2000
+  statement_timeout_ms: 10000
   lock_timeout_ms: 200
   read_operations:
     point_lookup_weight: 50

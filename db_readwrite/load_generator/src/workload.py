@@ -42,7 +42,7 @@ class WorkloadExecutor:
         self.read_probability = read_pct / 100.0
 
         # Per-session timeouts for workload connections (prep stays unbounded).
-        self.statement_timeout_ms = config.get('statement_timeout_ms', 2000)
+        self.statement_timeout_ms = config.get('statement_timeout_ms', 10000)
         self.lock_timeout_ms = config.get('lock_timeout_ms', 200)
 
         # Operation weights
