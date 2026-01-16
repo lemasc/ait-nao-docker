@@ -2,9 +2,11 @@
 Query templates and execution functions for the benchmark workload.
 """
 
+import logging
 import random
 import string
 import time
+from collections import Counter
 from typing import Literal
 
 import psycopg
@@ -30,10 +32,32 @@ class QueryExecutor:
         self.min_indexed_col, self.max_indexed_col = indexed_col_range
         self.range_scan_size = range_scan_size
         self.payload_size_bytes = payload_size_bytes
+        self._error_counts = Counter()
+        self._error_last_log = {}
+        self._error_log_interval_s = 5.0
 
         # Pre-generate payload template for better performance
         self.payload_template = ''.join(
             random.choices(string.ascii_letters + string.digits, k=payload_size_bytes)
+        )
+
+    def _log_error(self, operation_type: str, exc: Exception) -> None:
+        key = (operation_type, exc.__class__.__name__, str(exc))
+        self._error_counts[key] += 1
+
+        now = time.monotonic()
+        last = self._error_last_log.get(operation_type, 0.0)
+        if now - last < self._error_log_interval_s:
+            return
+
+        self._error_last_log[operation_type] = now
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "Operation %s error sample: %s: %s (count=%d)",
+            operation_type,
+            exc.__class__.__name__,
+            exc,
+            self._error_counts[key],
         )
 
     def execute_point_lookup(self, conn) -> tuple[float, bool]:
@@ -56,6 +80,11 @@ class QueryExecutor:
             latency = time.perf_counter() - start
             return latency, True
         except Exception as e:
+            self._log_error("point_lookup", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
@@ -82,6 +111,11 @@ class QueryExecutor:
             latency = time.perf_counter() - start
             return latency, True
         except Exception as e:
+            self._log_error("range_scan", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
@@ -108,6 +142,11 @@ class QueryExecutor:
             latency = time.perf_counter() - start
             return latency, True
         except Exception as e:
+            self._log_error("range_order", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             latency = time.perf_counter() - start
             return latency, False
 
@@ -131,6 +170,7 @@ class QueryExecutor:
             latency = time.perf_counter() - start
             return latency, True
         except Exception as e:
+            self._log_error("insert", e)
             conn.rollback()
             latency = time.perf_counter() - start
             return latency, False
@@ -156,6 +196,7 @@ class QueryExecutor:
             latency = time.perf_counter() - start
             return latency, True
         except Exception as e:
+            self._log_error("update", e)
             conn.rollback()
             latency = time.perf_counter() - start
             return latency, False
