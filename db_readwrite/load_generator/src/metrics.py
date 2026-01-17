@@ -15,6 +15,7 @@ from typing import Optional
 from prometheus_client import Counter, Gauge, Histogram, Summary, start_http_server
 
 logger = logging.getLogger(__name__)
+ERROR_TYPES = ("timeout_statement", "timeout_lock", "deadlock", "other")
 
 
 class MetricsCollector:
@@ -45,6 +46,7 @@ class MetricsCollector:
         self.latency_mins = {}
         self.latency_maxs = {}
         self.operation_counts = defaultdict(lambda: {'success': 0, 'error': 0})
+        self.error_type_counts = defaultdict(lambda: defaultdict(int))
 
         # Prometheus metrics
         self._setup_prometheus_metrics()
@@ -111,7 +113,8 @@ class MetricsCollector:
             self._detailed_writer.writerow(['operation_type', 'latency_seconds', 'latency_ms'])
             logger.info(f"Streaming detailed latencies to {csv_file}")
 
-    def record_operation(self, operation_type: str, latency: float, success: bool):
+    def record_operation(self, operation_type: str, latency: float, success: bool,
+                         error_type: Optional[str] = None):
         """
         Record a single operation result.
 
@@ -146,6 +149,10 @@ class MetricsCollector:
                         samples[random.randint(0, self.max_latency_samples - 1)] = latency
             else:
                 self.latency_samples[operation_type].append(latency)
+
+            if not success:
+                normalized_error = error_type if error_type in ERROR_TYPES else "other"
+                self.error_type_counts[operation_type][normalized_error] += 1
 
             if self._detailed_writer is not None:
                 self._detailed_writer.writerow([operation_type, latency, latency * 1000])
@@ -184,6 +191,11 @@ class MetricsCollector:
                     return sorted_latencies[f] * (c - k) + sorted_latencies[c] * (k - f)
 
                 counts = self.operation_counts[op_type]
+                error_types = self.error_type_counts.get(op_type, {})
+                error_type_summary = {
+                    error_type: error_types.get(error_type, 0)
+                    for error_type in ERROR_TYPES
+                }
 
                 summary[op_type] = {
                     'count': total_count,
@@ -195,6 +207,7 @@ class MetricsCollector:
                     'p50_latency_ms': percentile(50) * 1000,
                     'p95_latency_ms': percentile(95) * 1000,
                     'p99_latency_ms': percentile(99) * 1000,
+                    'errors_by_type': error_type_summary,
                 }
 
             return summary
@@ -224,6 +237,9 @@ class MetricsCollector:
             self.base_filename = f"{indexed}_r{ratio[0]}w{ratio[1]}_c{concurrency}_{timestamp}"
 
         base_filename = self.base_filename
+
+        for stats in summary.values():
+            stats['ops_per_sec'] = stats['count'] / duration if duration > 0 else 0.0
 
         # Export JSON
         if self.export_json:
@@ -262,10 +278,12 @@ class MetricsCollector:
             writer = csv.writer(f)
             writer.writerow([
                 'operation_type', 'count', 'success', 'error',
-                'min_ms', 'max_ms', 'mean_ms', 'p50_ms', 'p95_ms', 'p99_ms'
+                'min_ms', 'max_ms', 'mean_ms', 'p50_ms', 'p95_ms', 'p99_ms',
+                'ops_per_sec', 'timeout_statement', 'timeout_lock', 'deadlock', 'other'
             ])
 
             for op_type, stats in summary.items():
+                error_types = stats.get('errors_by_type', {})
                 writer.writerow([
                     op_type,
                     stats['count'],
@@ -277,6 +295,11 @@ class MetricsCollector:
                     f"{stats['p50_latency_ms']:.3f}",
                     f"{stats['p95_latency_ms']:.3f}",
                     f"{stats['p99_latency_ms']:.3f}",
+                    f"{stats['ops_per_sec']:.3f}",
+                    error_types.get('timeout_statement', 0),
+                    error_types.get('timeout_lock', 0),
+                    error_types.get('deadlock', 0),
+                    error_types.get('other', 0),
                 ])
 
         logger.info(f"Summary exported to {summary_csv}")

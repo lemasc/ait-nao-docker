@@ -7,7 +7,7 @@ import random
 import string
 import time
 from collections import Counter
-from typing import Literal
+from typing import Literal, Optional
 
 import psycopg
 
@@ -60,7 +60,21 @@ class QueryExecutor:
             self._error_counts[key],
         )
 
-    def execute_point_lookup(self, conn) -> tuple[float, bool]:
+    def _classify_error(self, exc: Exception) -> str:
+        sqlstate = getattr(exc, "sqlstate", None)
+        if sqlstate == "57014":
+            return "timeout_statement"
+        if sqlstate == "55P03":
+            return "timeout_lock"
+        if sqlstate == "40P01":
+            return "deadlock"
+        if isinstance(exc, psycopg.errors.QueryCanceled):
+            return "timeout_statement"
+        if isinstance(exc, psycopg.errors.DeadlockDetected):
+            return "deadlock"
+        return "other"
+
+    def execute_point_lookup(self, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute point lookup query.
 
@@ -78,7 +92,7 @@ class QueryExecutor:
                 )
                 result = cur.fetchall()
             latency = time.perf_counter() - start
-            return latency, True
+            return latency, True, None
         except Exception as e:
             self._log_error("point_lookup", e)
             try:
@@ -86,9 +100,9 @@ class QueryExecutor:
             except Exception:
                 pass
             latency = time.perf_counter() - start
-            return latency, False
+            return latency, False, self._classify_error(e)
 
-    def execute_range_scan(self, conn) -> tuple[float, bool]:
+    def execute_range_scan(self, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute range scan query.
 
@@ -109,7 +123,7 @@ class QueryExecutor:
                 )
                 result = cur.fetchall()
             latency = time.perf_counter() - start
-            return latency, True
+            return latency, True, None
         except Exception as e:
             self._log_error("range_scan", e)
             try:
@@ -117,9 +131,9 @@ class QueryExecutor:
             except Exception:
                 pass
             latency = time.perf_counter() - start
-            return latency, False
+            return latency, False, self._classify_error(e)
 
-    def execute_range_order(self, conn) -> tuple[float, bool]:
+    def execute_range_order(self, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute range scan with ORDER BY query.
 
@@ -140,7 +154,7 @@ class QueryExecutor:
                 )
                 result = cur.fetchall()
             latency = time.perf_counter() - start
-            return latency, True
+            return latency, True, None
         except Exception as e:
             self._log_error("range_order", e)
             try:
@@ -148,9 +162,9 @@ class QueryExecutor:
             except Exception:
                 pass
             latency = time.perf_counter() - start
-            return latency, False
+            return latency, False, self._classify_error(e)
 
-    def execute_insert(self, conn) -> tuple[float, bool]:
+    def execute_insert(self, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute INSERT operation.
 
@@ -168,14 +182,14 @@ class QueryExecutor:
                 )
             conn.commit()
             latency = time.perf_counter() - start
-            return latency, True
+            return latency, True, None
         except Exception as e:
             self._log_error("insert", e)
             conn.rollback()
             latency = time.perf_counter() - start
-            return latency, False
+            return latency, False, self._classify_error(e)
 
-    def execute_update(self, conn) -> tuple[float, bool]:
+    def execute_update(self, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute UPDATE operation (payload only).
 
@@ -194,14 +208,14 @@ class QueryExecutor:
                 )
             conn.commit()
             latency = time.perf_counter() - start
-            return latency, True
+            return latency, True, None
         except Exception as e:
             self._log_error("update", e)
             conn.rollback()
             latency = time.perf_counter() - start
-            return latency, False
+            return latency, False, self._classify_error(e)
 
-    def execute_operation(self, operation_type: OperationType, conn) -> tuple[float, bool]:
+    def execute_operation(self, operation_type: OperationType, conn) -> tuple[float, bool, Optional[str]]:
         """
         Execute the specified operation type.
 
@@ -210,7 +224,7 @@ class QueryExecutor:
             conn: Database connection
 
         Returns:
-            Tuple of (latency_seconds, success)
+            Tuple of (latency_seconds, success, error_type)
         """
         if operation_type == "point_lookup":
             return self.execute_point_lookup(conn)

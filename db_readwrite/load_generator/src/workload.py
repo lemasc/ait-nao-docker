@@ -155,13 +155,13 @@ class WorkloadExecutor:
                     operation_type = self._select_operation()
 
                     # Execute operation
-                    latency, success = self.query_executor.execute_operation(
+                    latency, success, error_type = self.query_executor.execute_operation(
                         operation_type, conn
                     )
 
                     # Record metrics if not in warmup mode
                     if collect_metrics and not self.warmup_mode:
-                        self.metrics.record_operation(operation_type, latency, success)
+                        self.metrics.record_operation(operation_type, latency, success, error_type)
 
                     operations_executed += 1
 
