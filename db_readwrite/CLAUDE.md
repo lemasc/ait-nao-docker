@@ -50,6 +50,7 @@ docker compose exec postgres psql -U postgres -d benchmark_db
 - Grafana: http://localhost:3000 (admin/admin)
 - Prometheus: http://localhost:9090
 - Load generator metrics: http://localhost:8000
+- cAdvisor (container metrics): http://localhost:8080
 
 ## Architecture
 
@@ -67,8 +68,12 @@ docker compose exec postgres psql -U postgres -d benchmark_db
    - Extensions: pg_stat_statements for query analysis
 
 3. **Metrics Pipeline**: Load Generator → Prometheus → Grafana
-   - Prometheus scrapes metrics from load generator (port 8000) and postgres_exporter
+   - Prometheus scrapes metrics from load generator (port 8000), postgres_exporter, and cAdvisor
    - Grafana visualizes P95 latency, throughput, buffer hit ratio, and operation counts
+
+4. **cAdvisor**: Container resource monitoring
+   - Tracks CPU, memory, network, and disk I/O for all containers
+   - Provides visibility into resource consumption during benchmarks
 
 ### Database Schema
 
@@ -140,13 +145,15 @@ Configuration lives in `load_generator/config/test_config.yaml` with three secti
 
 **queries.py**: Query templates and execution
 - `QueryExecutor`: Stateful executor holding data ranges and parameters
-- Each `execute_*` method: Returns `(latency_seconds, success)` tuple
+- Each `execute_*` method: Returns `(latency_seconds, success, error_type)` tuple
 - Uses `time.perf_counter()` for high-resolution latency measurement
 - Handles transaction commit/rollback for writes
+- Tracks error types: timeout, lock_timeout, other database errors
 
 **metrics.py**: Prometheus metrics and result export
 - Prometheus histograms for latency (with configurable buckets)
-- Counters for operation counts by type and status
+- Counters for operation counts by type, status, and error type
+- Throughput gauges per operation type
 - Exports to JSON (summary stats) and CSV (per-operation data)
 - Implements reservoir sampling when `max_latency_samples` > 0
 
@@ -160,6 +167,45 @@ After each test, results are written to `./results/`:
 - `{indexed}_{ratio}_{concurrency}_{duration}.json`: Summary statistics and config
 - `*_summary.csv`: Per-operation-type summary statistics
 - `*_detailed.csv`: All individual operation latencies (if `stream_detailed_csv: true`)
+
+## Matrix Automation Scripts
+
+The `scripts/` directory contains tools for automating the full 2×3×5 experiment matrix:
+
+### Generating Config Files
+```bash
+python scripts/generate_configs.py
+```
+Creates 30 config files in `load_generator/config/generated/` by varying:
+- `indexed`: true/false (2 levels)
+- `read_write_ratio`: 90:10, 50:50, 10:90 (3 levels)
+- `concurrency`: 1, 4, 8, 16, 32 (5 levels)
+
+Files are named: `{indexed|no_index}_rw{read}_{write}_c{concurrency}.yaml`
+
+### Creating Run Orders
+```bash
+python scripts/generate_run_order.py \
+  --indexed true,false \
+  --read-write-ratios 90:10,50:50,10:90 \
+  --concurrency 1,4,8,16,32 \
+  --block-by indexed,read_write_ratio,concurrency \
+  --output run_orders/run_order.json
+```
+Generates a filtered and ordered list of configs to execute. The `--block-by` parameter controls execution order (e.g., run all concurrency levels for each ratio before moving to the next).
+
+### Executing Matrix Runs
+```bash
+python scripts/run_matrix.py --run-order run_orders/run_order.json
+```
+Key features:
+- **State tracking**: Creates `<run_order>.state.json` to track completed tests
+- **Auto-resume**: Restarts from last incomplete test after interruption
+- **Smart data loading**: Automatically skips data load if dataset size hasn't changed
+- **Manual restart**: Use `--start-index N` to restart at specific position
+- **Dry run**: Use `--dry-run` to preview commands without execution
+
+The script checks existing row count before each test and reuses data when possible to save time.
 
 ## Development Notes
 
@@ -198,3 +244,27 @@ The warmup phase primes PostgreSQL's buffer cache and ensures stable measurement
 - Development/debugging
 - Memory-resident datasets where caching is less critical
 - Follow-up tests on the same data without restart
+
+## Troubleshooting
+
+### High Timeout Rates
+If you see many timeout errors in results:
+- Increase `statement_timeout_ms` in config (currently defaults to 30000ms)
+- Reduce concurrency level to decrease lock contention
+- Check PostgreSQL logs: `docker compose logs postgres`
+
+### Data Loading Fails
+If data loading is interrupted or fails:
+- Check available disk space
+- Verify PostgreSQL container has enough memory (8GB limit in docker-compose)
+- Manually drop table and restart: `docker compose exec postgres psql -U postgres -d benchmark_db -c "DROP TABLE IF EXISTS test_table;"`
+
+### Metrics Not Appearing in Grafana
+- Verify Prometheus is scraping: http://localhost:9090/targets
+- Check load generator is exposing metrics: http://localhost:8000
+- Ensure test is running (not just warmup phase) for measurement metrics
+
+### Container Resource Issues
+- Monitor with cAdvisor: http://localhost:8080
+- Check Docker resource limits in docker-compose.yml
+- Ensure host has enough available resources (4 CPUs, 8GB RAM minimum)
