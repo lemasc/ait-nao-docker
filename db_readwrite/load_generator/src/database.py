@@ -179,8 +179,8 @@ class Database:
 
                         rows_inserted += current_batch
 
-                    if rows_inserted % 100000 == 0:
-                        logger.info(f"  Loaded {rows_inserted}/{num_rows} rows")
+                        if rows_inserted % 100000 == 0:
+                            logger.info(f"  Loaded {rows_inserted}/{num_rows} rows")
 
                 conn.commit()
 
