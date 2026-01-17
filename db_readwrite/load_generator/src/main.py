@@ -59,11 +59,12 @@ def main():
         # Setup database schema and load data
         if not args.skip_data_load:
             logger.info("\nSetting up database schema...")
-            database.setup_schema(drop_if_exists=True)
+            database.setup_schema(drop_if_exists=False)
 
             logger.info("\nLoading initial dataset...")
             dataset_size = workload_config['dataset_size']
             payload_size = workload_config.get('payload_size_bytes', 1024)
+            database.drop_index()
             database.load_data(dataset_size, payload_size)
 
             # Create or skip index

@@ -103,18 +103,7 @@ def should_skip_data_load(workload: dict, repo_root: Path, args) -> tuple:
     if args.dry_run:
         return False, "dry run"
 
-    dataset_size = workload.get("dataset_size")
-    if dataset_size is None:
-        return False, "dataset_size not found"
-
-    row_count, error = get_row_count(repo_root)
-    if error:
-        return False, f"db check failed ({error})"
-
-    if row_count >= dataset_size:
-        return True, f"rows={row_count} expected>={dataset_size}"
-
-    return False, f"rows={row_count} expected>={dataset_size}"
+    return False, "always reload"
 
 
 def build_command(config_path: str, args, skip_data_load: bool) -> list:

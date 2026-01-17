@@ -6,6 +6,7 @@ import logging
 import random
 import string
 import time
+from io import StringIO
 from typing import Optional
 
 import psycopg
@@ -86,14 +87,24 @@ class Database:
                     cur.execute("DROP TABLE IF EXISTS test_table CASCADE")
 
                 logger.info("Creating test_table")
-                cur.execute("""
-                    CREATE TABLE test_table (
-                        id BIGSERIAL PRIMARY KEY,
-                        indexed_col INTEGER NOT NULL,
-                        payload TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
+                if drop_if_exists:
+                    cur.execute("""
+                        CREATE TABLE test_table (
+                            id BIGSERIAL PRIMARY KEY,
+                            indexed_col INTEGER NOT NULL,
+                            payload TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
+                else:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS test_table (
+                            id BIGSERIAL PRIMARY KEY,
+                            indexed_col INTEGER NOT NULL,
+                            payload TEXT,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """)
 
                 conn.commit()
 
@@ -126,7 +137,13 @@ class Database:
 
         logger.info("Index dropped")
 
-    def load_data(self, num_rows: int, payload_size_bytes: int = 1024, batch_size: int = 10000):
+    def load_data(
+        self,
+        num_rows: int,
+        payload_size_bytes: int = 1024,
+        batch_size: int = 10000,
+        truncate_first: bool = True
+    ):
         """
         Load initial dataset into test_table.
 
@@ -143,23 +160,24 @@ class Database:
 
         with self.get_connection() as conn:
             with conn.cursor() as cur:
+                if truncate_first:
+                    cur.execute("TRUNCATE test_table")
+
                 rows_inserted = 0
 
-                while rows_inserted < num_rows:
-                    current_batch = min(batch_size, num_rows - rows_inserted)
+                with cur.copy("COPY test_table (indexed_col, payload) FROM STDIN") as copy:
+                    while rows_inserted < num_rows:
+                        current_batch = min(batch_size, num_rows - rows_inserted)
 
-                    # Prepare batch data
-                    # indexed_col: distributed across a range for realistic queries
-                    values = [
-                        (random.randint(0, num_rows * 2), payload_template)
-                        for _ in range(current_batch)
-                    ]
+                        # Prepare batch data for COPY
+                        # indexed_col: distributed across a range for realistic queries
+                        buffer = StringIO()
+                        for _ in range(current_batch):
+                            indexed_value = random.randint(0, num_rows * 2)
+                            buffer.write(f"{indexed_value}\t{payload_template}\n")
+                        copy.write(buffer.getvalue())
 
-                    # Bulk insert using execute_values equivalent
-                    query = "INSERT INTO test_table (indexed_col, payload) VALUES (%s, %s)"
-                    cur.executemany(query, values)
-
-                    rows_inserted += current_batch
+                        rows_inserted += current_batch
 
                     if rows_inserted % 100000 == 0:
                         logger.info(f"  Loaded {rows_inserted}/{num_rows} rows")
