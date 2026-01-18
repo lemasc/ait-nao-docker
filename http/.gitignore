@@ -1,4 +1,7 @@
-results/
 *.zip
 *.rar
-*.csv
+
+# Ignore raw CSV files but track compressed .csv.gz files
+results/**/*.csv
+results/**/*.txt
+!results/**/*.csv.gz
