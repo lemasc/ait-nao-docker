@@ -1,0 +1,61 @@
+# PostgreSQL Benchmark Configuration
+# This is a sample configuration for a single test run
+
+database:
+  host: postgres
+  port: 5432
+  name: benchmark_db
+  user: postgres
+  password: postgres
+  pool_size: 10
+
+workload:
+  # Dataset size (number of rows)
+  # For memory-resident: ~1M rows (~250MB)
+  # For disk-resident: ~16M rows (~4GB for 8GB RAM system)
+  dataset_size: 1000000
+
+  # Indexing configuration
+  indexed: true  # true = with B-tree index, false = no index
+
+  # Read/write ratio [read_percentage, write_percentage]
+  # Options: [90, 10], [50, 50], [10, 90]
+  read_write_ratio: [90, 10]
+
+  # Number of concurrent clients
+  # Options: 1, 4, 8, 16, 32
+  concurrency: 4
+
+  # Test duration in seconds
+  duration_seconds: 300  # 5 minutes
+  warmup_seconds: 60     # 1 minute warmup
+
+  # Timeouts for workload connections (prep steps are unbounded)
+  statement_timeout_ms: 30000
+  lock_timeout_ms: 500
+
+  # Distribution of read operations (must sum to 100)
+  read_operations:
+    point_lookup_weight: 50
+    range_scan_weight: 30
+    range_order_weight: 20
+
+  # Distribution of write operations (must sum to 100)
+  write_operations:
+    insert_weight: 50
+    update_weight: 50
+
+  # Query parameters
+  range_scan_size: 100        # LIMIT for range queries
+  payload_size_bytes: 1024    # Size of payload field
+
+metrics:
+  prometheus_port: 8000
+  export_json: true
+  export_csv: true
+  stream_detailed_csv: true
+  max_latency_samples: 200000  # 0 = store all latencies (exact percentiles)
+  output_dir: /results
+
+  # Histogram buckets for latency (in seconds)
+  latency_buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
